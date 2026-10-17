@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { app, BrowserWindow, dialog, session, shell } from "electron";
 
+import { startAutomaticUpdates } from "./updater.mjs";
+
 let mainWindow;
 let nextServer;
 let applicationOrigin;
@@ -108,7 +110,7 @@ async function seedPdfAssets(assetRoot) {
   }
 }
 
-async function prepareApplicationDatabase(databasePort, psql, seedDatabase, seedSchema) {
+async function prepareApplicationDatabase(databasePort, psql, seedDatabase, migrationsRoot) {
   // The packaged web server already ships the PostgreSQL driver; reuse it instead of the psql/createdb tools.
   const webModules = createRequire(path.join(process.resourcesPath, "web", "apps", "web", "package.json"));
   const pg = webModules("pg");
@@ -126,21 +128,41 @@ async function prepareApplicationDatabase(databasePort, psql, seedDatabase, seed
   const client = new pg.Client({ host: "127.0.0.1", port: databasePort, user: "postgres", database: "research_workspace" });
   await client.connect();
   try {
-    const schema = await client.query(
-      "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'AcademicProject'"
-    );
-    if (schema.rowCount === 1) return;
+    const migrations = (await readdir(migrationsRoot)).sort();
+    await client.query('CREATE TABLE IF NOT EXISTS "_desktop_migrations" ("name" TEXT PRIMARY KEY, "appliedAt" TIMESTAMPTZ NOT NULL DEFAULT now())');
+    const applied = new Set((await client.query('SELECT "name" FROM "_desktop_migrations"')).rows.map((row) => row.name));
 
-    // A full pg_dump seed needs psql for its COPY blocks; otherwise start from the empty schema.
-    if ((await pathExists(seedDatabase)) && (await pathExists(psql))) {
-      runDatabaseCommand(
-        psql,
-        ["-h", "127.0.0.1", "-p", String(databasePort), "-U", "postgres", "-d", "research_workspace", "-v", "ON_ERROR_STOP=1", "-f", seedDatabase],
-        "The initial research data could not be restored"
+    if (applied.size === 0) {
+      const schema = await client.query(
+        "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'AcademicProject'"
       );
-      return;
+      // A full pg_dump seed needs psql for its COPY blocks; it holds the first migration's schema.
+      const restoreSeed = schema.rowCount === 0 && (await pathExists(seedDatabase)) && (await pathExists(psql));
+      if (restoreSeed) {
+        runDatabaseCommand(
+          psql,
+          ["-h", "127.0.0.1", "-p", String(databasePort), "-U", "postgres", "-d", "research_workspace", "-v", "ON_ERROR_STOP=1", "-f", seedDatabase],
+          "The initial research data could not be restored"
+        );
+      }
+      // Databases from versions before migrations were tracked already have the first migration.
+      if ((schema.rowCount === 1 || restoreSeed) && migrations[0] !== undefined) {
+        await client.query('INSERT INTO "_desktop_migrations" ("name") VALUES ($1)', [migrations[0]]);
+        applied.add(migrations[0]);
+      }
     }
-    await client.query(await readFile(seedSchema, "utf8"));
+
+    for (const name of migrations.filter((candidate) => !applied.has(candidate))) {
+      await client.query("BEGIN");
+      try {
+        await client.query(await readFile(path.join(migrationsRoot, name, "migration.sql"), "utf8"));
+        await client.query('INSERT INTO "_desktop_migrations" ("name") VALUES ($1)', [name]);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw new Error(`The database update ${name} could not be applied: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      }
+    }
   } finally {
     await client.end();
   }
@@ -156,7 +178,7 @@ async function ensureManagedDatabase(userDataRoot, logRoot) {
   const clusterRoot = path.join(userDataRoot, "postgres-data");
   const databaseLog = path.join(logRoot, "postgres.log");
   const seedDatabase = path.join(process.resourcesPath, "seed", "database.sql");
-  const seedSchema = path.join(process.resourcesPath, "seed", "schema.sql");
+  const migrationsRoot = path.join(process.resourcesPath, "seed", "migrations");
   const isInitialized = await pathExists(path.join(clusterRoot, "PG_VERSION"));
 
   if (!isInitialized) {
@@ -180,7 +202,7 @@ async function ensureManagedDatabase(userDataRoot, logRoot) {
   }
   managedDatabaseStarted = true;
 
-  await prepareApplicationDatabase(databasePort, psql, seedDatabase, seedSchema);
+  await prepareApplicationDatabase(databasePort, psql, seedDatabase, migrationsRoot);
 
   managedDatabaseRoot = clusterRoot;
   managedDatabaseControl = pgCtl;
@@ -293,6 +315,7 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   try {
     await createMainWindow();
+    startAutomaticUpdates(() => mainWindow);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const logRoot = path.join(app.getPath("userData"), "logs");

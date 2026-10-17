@@ -13,7 +13,7 @@ const postgresDownloadRoot = resolve(workspaceRoot, ".desktop-cache", "postgresq
 const postgresPackage = "@embedded-postgres/windows-x64@17.10.0-beta.17";
 const postgresTargetRoot = resolve(desktopVendorRoot, "postgresql");
 const seedTargetRoot = resolve(desktopVendorRoot, "seed");
-const schemaMigration = resolve(workspaceRoot, "packages", "db", "prisma", "migrations", "20260710235500_init", "migration.sql");
+const migrationsRoot = resolve(workspaceRoot, "packages", "db", "prisma", "migrations");
 // Optional private seed data (a pg_dump file and PDF assets) copied into the installer when present.
 const databaseBackup = process.env.RESEARCH_SEED_SQL;
 const localAssets = resolve(workspaceRoot, ".local-assets");
@@ -92,7 +92,12 @@ for (const license of ["server_license.txt", "commandlinetools_3rd_party_license
     await cp(resolve(postgresSourceRoot, license), resolve(postgresTargetRoot, license));
   }
 }
-await cp(schemaMigration, resolve(seedTargetRoot, "schema.sql"));
+// Every migration ships so an updated app can bring an existing database up to date on start.
+for (const entry of await readdir(migrationsRoot, { withFileTypes: true })) {
+  if (entry.isDirectory()) {
+    await cp(resolve(migrationsRoot, entry.name, "migration.sql"), resolve(seedTargetRoot, "migrations", entry.name, "migration.sql"));
+  }
+}
 if (databaseBackup !== undefined) {
   await cp(databaseBackup, resolve(seedTargetRoot, "database.sql"));
 }

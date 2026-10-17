@@ -1,6 +1,6 @@
 {
   "name": "@research/desktop",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Windows desktop shell for Research Workspace",
   "type": "module",
@@ -8,14 +8,22 @@
   "scripts": {
     "dev": "electron .",
     "bundle": "electron-builder --dir",
-    "installer": "electron-builder --win nsis --publish never"
+    "installer": "electron-builder --win nsis --publish never",
+    "release": "electron-builder --win nsis --publish always"
   },
   "build": {
     "appId": "com.researchworkspace.desktop",
     "productName": "Research Workspace",
     "asar": true,
     "electronVersion": "43.3.0",
-    "publish": [],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ozgeozkuvanci",
+        "repo": "researchquoter-releases",
+        "releaseType": "release"
+      }
+    ],
     "directories": {
       "output": "../../dist/desktop"
     },
@@ -59,5 +67,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Research Workspace"
     }
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
   }
 }
