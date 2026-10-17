@@ -3,6 +3,7 @@
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { type PdfDetails, readPdfDetails } from "./pdf-metadata";
 import { PdfReader, type SelectionAction } from "./pdf-reader";
 
 interface Capture {
@@ -230,19 +231,17 @@ export function ProjectLauncher() {
     await loadProjects(payload.projectId);
   }
 
-  async function saveSource(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const response = await fetch(`/api/projects/${selectedProjectId}/sources`, { method: "POST", body: new FormData(form) });
+  async function saveSource(form: FormData): Promise<boolean> {
+    const response = await fetch(`/api/projects/${selectedProjectId}/sources`, { method: "POST", body: form });
     const payload: unknown = await response.json();
     if (!response.ok || typeof payload !== "object" || payload === null || !("sourceDocumentId" in payload) || typeof payload.sourceDocumentId !== "string") {
       notify("error", getErrorMessage(payload));
-      return;
+      return false;
     }
-    form.reset();
     setShowSourceForm(false);
     await loadSources(selectedProjectId, payload.sourceDocumentId);
     notify("success", "PDF eklendi. Metni seçip sağ tıklayarak paraphrase yapabilirsiniz.");
+    return true;
   }
 
   function openEvidence(link: EvidenceLink): void {
@@ -336,13 +335,7 @@ export function ProjectLauncher() {
           <button className="icon-button" type="button" title="PDF ekle" onClick={() => setShowSourceForm((current) => !current)}>+</button>
         </div>
         {showSourceForm ? (
-          <form className="source-form" onSubmit={saveSource}>
-            <input name="file" type="file" accept="application/pdf,.pdf" required aria-label="PDF dosyası" />
-            <input name="title" placeholder="Kaynak başlığı" required maxLength={500} />
-            <input name="author" placeholder="Yazar: Soyad, Ad; Soyad, Ad" maxLength={300} />
-            <input name="year" placeholder="Yıl" inputMode="numeric" pattern="[0-9]{4}" />
-            <button type="submit">PDF'i kaydet</button>
-          </form>
+          <SourceForm onSubmit={saveSource} />
         ) : null}
         <ul className="source-list">
           {sources.length === 0 ? <li className="muted">Henüz PDF yok. + ile ekleyin.</li> : sources.map((source) => (
@@ -420,6 +413,63 @@ export function ProjectLauncher() {
 
       {showSettings ? <SettingsDialog hasApiKey={hasApiKey} onClose={() => setShowSettings(false)} onSaved={(value) => { setHasApiKey(value); setShowSettings(false); }} /> : null}
     </div>
+  );
+}
+
+// Choosing a PDF fills in its title, authors and year from the file (and Crossref, when it has a DOI);
+// the fields stay editable because the guesses can be wrong.
+function SourceForm({ onSubmit }: { onSubmit: (form: FormData) => Promise<boolean> }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [details, setDetails] = useState<PdfDetails>({ title: "", authors: "", year: "", doi: "" });
+  const [reading, setReading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function chooseFile(chosen: File | null): Promise<void> {
+    setFile(chosen);
+    if (chosen === null) return;
+    setReading(true);
+    try {
+      const found = await readPdfDetails(chosen);
+      setDetails((current) => ({
+        title: found.title || current.title || chosen.name.replace(/\.pdf$/i, ""),
+        authors: found.authors || current.authors,
+        year: found.year || current.year,
+        doi: found.doi
+      }));
+    } catch {
+      setDetails((current) => ({ ...current, title: current.title || chosen.name.replace(/\.pdf$/i, "") }));
+    } finally {
+      setReading(false);
+    }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (file === null) return;
+    const form = new FormData();
+    form.set("file", file);
+    form.set("title", details.title);
+    form.set("author", details.authors);
+    form.set("year", details.year);
+    if (details.doi) form.set("doi", details.doi);
+    setSaving(true);
+    await onSubmit(form);
+    setSaving(false);
+  }
+
+  const update = (key: keyof PdfDetails) => (event: React.ChangeEvent<HTMLInputElement>) => setDetails((current) => ({ ...current, [key]: event.target.value }));
+
+  return (
+    <form className="source-form" onSubmit={submit}>
+      <input type="file" accept="application/pdf,.pdf" required aria-label="PDF dosyası" onChange={(event) => void chooseFile(event.target.files?.[0] ?? null)} />
+      {reading ? <p className="muted">PDF'teki bilgiler okunuyor…</p> : null}
+      <input aria-label="Kaynak başlığı" placeholder="Kaynak başlığı" required maxLength={500} value={details.title} onChange={update("title")} />
+      <input aria-label="Yazarlar" placeholder="Yazar: Soyad, Ad; Soyad, Ad" maxLength={300} value={details.authors} onChange={update("authors")} />
+      <input aria-label="Yıl" placeholder="Yıl" inputMode="numeric" pattern="[0-9]{4}" value={details.year} onChange={update("year")} />
+      {details.doi ? <p className="muted">DOI: {details.doi}</p> : null}
+      {file !== null && !reading ? <p className="muted">Bilgiler PDF'ten alındı, kontrol edip düzeltebilirsiniz.</p> : null}
+      <button type="submit" disabled={reading || saving}>{saving ? "Kaydediliyor…" : "PDF'i kaydet"}</button>
+    </form>
   );
 }
 

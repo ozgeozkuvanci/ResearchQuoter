@@ -69,6 +69,8 @@ export async function POST(request: Request, context: { params: Promise<{ projec
   const formData = await request.formData();
   const title = formData.get("title");
   const author = formData.get("author");
+  const doiField = formData.get("doi");
+  const doi = typeof doiField === "string" && /^10\.\d{4,9}\/\S+$/.test(doiField.trim()) ? doiField.trim() : undefined;
   const year = formData.get("year");
   const uploadedFile = formData.get("file");
   if (typeof title !== "string" || title.trim().length === 0 || !(uploadedFile instanceof File)) {
@@ -99,7 +101,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
             workspaceId: developmentContext.workspaceId,
             status: "CONFIRMED",
             title: title.trim(),
-            cslData: { id: crypto.randomUUID(), type: "article-journal", title: title.trim(), author: authors.map((name) => name.family === undefined ? { literal: name.literal } : { family: name.family, given: name.given }), issued: year ? { "date-parts": [[Number(year)]] } : undefined }
+            cslData: { id: crypto.randomUUID(), type: "article-journal", title: title.trim(), author: authors.map((name) => name.family === undefined ? { literal: name.literal } : { family: name.family, given: name.given }), issued: year ? { "date-parts": [[Number(year)]] } : undefined, ...(doi === undefined ? {} : { DOI: doi }) }
           }
         });
         for (const [position, name] of authors.entries()) {

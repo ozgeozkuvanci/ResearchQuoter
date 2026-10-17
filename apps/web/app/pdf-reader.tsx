@@ -30,12 +30,14 @@ export function PdfReader({ url, jumpToPage, onSelection }: PdfReaderProps) {
   const [width, setWidth] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [outline, setOutline] = useState<OutlineEntry[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     let loadingTask: { destroy(): Promise<void> } | null = null;
     setPdf(null);
     setError(null);
+    setOutline([]);
     void (async () => {
       try {
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -48,6 +50,8 @@ export function PdfReader({ url, jumpToPage, onSelection }: PdfReaderProps) {
         if (cancelled) return;
         setAspectRatio(viewport.height / viewport.width);
         setPdf(loaded);
+        const entries = await readOutline(loaded).catch(() => []);
+        if (!cancelled) setOutline(entries);
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "PDF açılamadı.");
       }
@@ -112,6 +116,16 @@ export function PdfReader({ url, jumpToPage, onSelection }: PdfReaderProps) {
 
   return (
     <div className="pdf-reader" ref={containerRef} onContextMenu={handleContextMenu}>
+      {outline.length === 0 ? null : (
+        <div className="pdf-toolbar">
+          <select aria-label="PDF içindekiler" value="" onChange={(event) => {
+            containerRef.current?.querySelector(`[data-page="${event.target.value}"]`)?.scrollIntoView({ block: "start" });
+          }}>
+            <option value="">İçindekiler: bir başlığa git…</option>
+            {outline.map((entry, index) => <option key={`${index}-${entry.page}`} value={entry.page}>{"  ".repeat(entry.depth)}{entry.title} (s. {entry.page})</option>)}
+          </select>
+        </div>
+      )}
       {error === null ? null : <p className="error" role="alert">{error}</p>}
       {pdf === null && error === null ? <p className="pdf-loading">PDF yükleniyor…</p> : null}
       {pdf === null || width === 0 ? null : Array.from({ length: pdf.numPages }, (_, index) => (
@@ -193,6 +207,32 @@ function PdfPage({ pdf, pageNumber, width, placeholderHeight }: { pdf: PDFDocume
       <span className="pdf-page-number">{pageNumber}</span>
     </div>
   );
+}
+
+interface OutlineEntry {
+  title: string;
+  page: number;
+  depth: number;
+}
+
+type OutlineNode = { title: string; dest: string | unknown[] | null; items: OutlineNode[] };
+
+// The PDF's own bookmarks (chapter and section headings), two levels deep, with their page numbers.
+async function readOutline(pdf: PDFDocumentProxy): Promise<OutlineEntry[]> {
+  const entries: OutlineEntry[] = [];
+  const visit = async (nodes: OutlineNode[], depth: number): Promise<void> => {
+    for (const node of nodes) {
+      const destination = typeof node.dest === "string" ? await pdf.getDestination(node.dest) : node.dest;
+      const reference = Array.isArray(destination) ? destination[0] : null;
+      const pageIndex = typeof reference === "number"
+        ? reference
+        : reference !== null && typeof reference === "object" ? await pdf.getPageIndex(reference as Parameters<PDFDocumentProxy["getPageIndex"]>[0]).catch(() => -1) : -1;
+      if (pageIndex >= 0) entries.push({ title: node.title.trim(), page: pageIndex + 1, depth });
+      if (depth < 1 && node.items.length > 0) await visit(node.items, depth + 1);
+    }
+  };
+  await visit(((await pdf.getOutline()) ?? []) as OutlineNode[], 0);
+  return entries;
 }
 
 function normalizeSelection(text: string): string {
