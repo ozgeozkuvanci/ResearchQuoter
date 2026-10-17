@@ -27,3 +27,4 @@ HANDOFF_TO_OTHER_COMPUTER.md
 database.sql
 *.dump
 *.backup
+.desktop-cache/

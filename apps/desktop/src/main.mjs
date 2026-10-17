@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, createWriteStream } from "node:fs";
-import { access, appendFile, cp, mkdir, readdir } from "node:fs/promises";
+import { access, appendFile, cp, mkdir, readdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import path from "node:path";
 
@@ -107,17 +108,55 @@ async function seedPdfAssets(assetRoot) {
   }
 }
 
+async function prepareApplicationDatabase(databasePort, psql, seedDatabase, seedSchema) {
+  // The packaged web server already ships the PostgreSQL driver; reuse it instead of the psql/createdb tools.
+  const webModules = createRequire(path.join(process.resourcesPath, "web", "apps", "web", "package.json"));
+  const pg = webModules("pg");
+  const adminClient = new pg.Client({ host: "127.0.0.1", port: databasePort, user: "postgres", database: "postgres" });
+  await adminClient.connect();
+  try {
+    const existing = await adminClient.query("SELECT 1 FROM pg_database WHERE datname = 'research_workspace'");
+    if (existing.rowCount === 0) {
+      await adminClient.query("CREATE DATABASE research_workspace");
+    }
+  } finally {
+    await adminClient.end();
+  }
+
+  const client = new pg.Client({ host: "127.0.0.1", port: databasePort, user: "postgres", database: "research_workspace" });
+  await client.connect();
+  try {
+    const schema = await client.query(
+      "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'AcademicProject'"
+    );
+    if (schema.rowCount === 1) return;
+
+    // A full pg_dump seed needs psql for its COPY blocks; otherwise start from the empty schema.
+    if ((await pathExists(seedDatabase)) && (await pathExists(psql))) {
+      runDatabaseCommand(
+        psql,
+        ["-h", "127.0.0.1", "-p", String(databasePort), "-U", "postgres", "-d", "research_workspace", "-v", "ON_ERROR_STOP=1", "-f", seedDatabase],
+        "The initial research data could not be restored"
+      );
+      return;
+    }
+    await client.query(await readFile(seedSchema, "utf8"));
+  } finally {
+    await client.end();
+  }
+}
+
 async function ensureManagedDatabase(userDataRoot, logRoot) {
   desktopBootstrapLog = path.join(logRoot, "desktop-bootstrap.log");
   const databasePort = 55432;
   const postgresBin = path.join(process.resourcesPath, "postgresql", "bin");
   const initDb = path.join(postgresBin, "initdb.exe");
   const pgCtl = path.join(postgresBin, "pg_ctl.exe");
-  const createDb = path.join(postgresBin, "createdb.exe");
   const psql = path.join(postgresBin, "psql.exe");
   const clusterRoot = path.join(userDataRoot, "postgres-data");
   const databaseLog = path.join(logRoot, "postgres.log");
   const seedDatabase = path.join(process.resourcesPath, "seed", "database.sql");
+  const seedSchema = path.join(process.resourcesPath, "seed", "schema.sql");
   const isInitialized = await pathExists(path.join(clusterRoot, "PG_VERSION"));
 
   if (!isInitialized) {
@@ -141,39 +180,7 @@ async function ensureManagedDatabase(userDataRoot, logRoot) {
   }
   managedDatabaseStarted = true;
 
-  const connectionArguments = ["-h", "127.0.0.1", "-p", String(databasePort), "-U", "postgres"];
-  const databaseCheck = runDatabaseCommand(
-    psql,
-    [...connectionArguments, "-d", "postgres", "-Atc", "SELECT 1 FROM pg_database WHERE datname='research_workspace';"],
-    "The application database could not be checked",
-    true
-  );
-  const databaseExists = databaseCheck.status === 0 && (databaseCheck.stdout ?? "").trim() === "1";
-
-  if (!databaseExists) {
-    runDatabaseCommand(createDb, [...connectionArguments, "research_workspace"], "The application database could not be created");
-  }
-
-  const schemaCheck = runDatabaseCommand(
-    psql,
-    [
-      ...connectionArguments,
-      "-d",
-      "research_workspace",
-      "-Atc",
-      "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='AcademicProject';"
-    ],
-    "The application database schema could not be checked",
-    true
-  );
-
-  if (schemaCheck.status !== 0 || (schemaCheck.stdout ?? "").trim() !== "1") {
-    runDatabaseCommand(
-      psql,
-      [...connectionArguments, "-d", "research_workspace", "-v", "ON_ERROR_STOP=1", "-f", seedDatabase],
-      "The initial research data could not be restored"
-    );
-  }
+  await prepareApplicationDatabase(databasePort, psql, seedDatabase, seedSchema);
 
   managedDatabaseRoot = clusterRoot;
   managedDatabaseControl = pgCtl;
