@@ -10,6 +10,9 @@ export default tseslint.config(
       "**/dist/**",
       "**/node_modules/**",
       "transfer-staging-*/**",
+      ".desktop-cache/**",
+      "apps/desktop/vendor/**",
+      "apps/web/public/**",
       "packages/db/src/generated/**",
       "**/playwright-report/**",
       "**/test-results/**"

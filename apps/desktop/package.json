@@ -1,6 +1,6 @@
 {
   "name": "@research/desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Windows desktop shell for Research Workspace",
   "type": "module",

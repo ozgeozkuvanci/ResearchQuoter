@@ -30,6 +30,7 @@ async function exists(target) {
 await rm(targetStaticRoot, { force: true, recursive: true });
 await mkdir(targetStaticRoot, { recursive: true });
 await cp(resolve(webRoot, ".next", "static"), targetStaticRoot, { recursive: true });
+await cp(resolve(webRoot, "public"), resolve(standaloneRoot, "apps", "web", "public"), { recursive: true });
 
 // Next.js links hashed external packages into .next/node_modules; replace those links with real
 // copies before the pnpm store they point into is removed, so the installer has no dangling links.

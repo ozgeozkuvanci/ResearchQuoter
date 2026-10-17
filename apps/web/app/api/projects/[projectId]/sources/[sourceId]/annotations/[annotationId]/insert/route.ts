@@ -5,12 +5,15 @@ import { createDatabaseClient, type Prisma } from "@research/db";
 import { NextResponse } from "next/server";
 
 import { getDevelopmentProjectContext } from "../../../../../../../../../lib/development-context";
+import { appendToSection } from "../../../../../../../../../lib/document-sections";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request, context: { params: Promise<{ projectId: string; sourceId: string; annotationId: string }> }): Promise<NextResponse> {
   const { projectId, sourceId, annotationId } = await context.params;
-  const paraphrase = readParaphrase(await request.json().catch(() => undefined));
+  const body: unknown = await request.json().catch(() => undefined);
+  const paraphrase = readParaphrase(body);
+  const sectionId = typeof body === "object" && body !== null && "sectionId" in body && typeof body.sectionId === "string" ? body.sectionId : undefined;
   if (paraphrase === null) return NextResponse.json({ error: "A paraphrase must contain between 1 and 20,000 characters." }, { status: 400 });
   try {
     const developmentContext = await getDevelopmentProjectContext();
@@ -46,7 +49,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
           select: { mainDocument: { select: { id: true, content: true } } }
         });
         if (project?.mainDocument === null || project === null) throw new Error("Main document not found.");
-        const content = appendParagraph(project.mainDocument.content, nodeId, insertedText);
+        const content = appendToSection(project.mainDocument.content, sectionId, nodeId, insertedText);
         const block = await transaction.documentBlock.create({
           data: { academicProjectId: projectId, mainDocumentId: project.mainDocument.id, nodeId, blockType: "paragraph", contentHash: insertedTextHash }
         });
@@ -102,13 +105,6 @@ function asCslReference(value: unknown): Record<string, unknown> {
 
 function addPageLocator(citation: string, pageNumber: number): string {
   return citation.endsWith(")") ? `${citation.slice(0, -1)}, p. ${pageNumber})` : `${citation}, p. ${pageNumber}`;
-}
-
-function appendParagraph(content: unknown, nodeId: string, text: string): Record<string, unknown> {
-  const current = typeof content === "object" && content !== null && "type" in content && content.type === "doc" && "content" in content && Array.isArray(content.content)
-    ? content.content
-    : [];
-  return { type: "doc", content: [...current, { type: "paragraph", attrs: { id: nodeId }, content: [{ type: "text", text }] }] };
 }
 
 function sha256(value: string): string {

@@ -210,7 +210,8 @@ async function startPackagedServer() {
       LOCAL_ASSET_ROOT: assetRoot,
       NODE_ENV: "production",
       PORT: String(port),
-      RESEARCH_DESKTOP: "1"
+      RESEARCH_DESKTOP: "1",
+      RESEARCH_SETTINGS_FILE: path.join(userDataRoot, "settings.json")
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true

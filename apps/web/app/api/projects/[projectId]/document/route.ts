@@ -4,44 +4,79 @@ import { createDatabaseClient, type Prisma } from "@research/db";
 import { NextResponse } from "next/server";
 
 import { getDevelopmentProjectContext } from "../../../../../lib/development-context";
+import { readSections, replaceSectionText, sectionText, writeSections } from "../../../../../lib/document-sections";
 
 export const runtime = "nodejs";
 
 export async function GET(_request: Request, context: { params: Promise<{ projectId: string }> }): Promise<NextResponse> {
   const { projectId } = await context.params;
-  return withDocument(projectId, async (document) => NextResponse.json({
-    text: extractText(document.content),
-    revision: document.revision,
-    blocks: extractBlocks(document.content),
-    evidence: document.provenanceLinks.map((link) => ({
-      id: link.id,
-      targetNodeId: link.targetDocumentBlock.nodeId,
-      sourceDocumentId: link.sourceDocument.id,
-      sourceTitle: link.sourceDocument.title,
-      pageNumber: link.annotationAnchor.pageIndex + 1,
-      selectedText: link.originalSelectedText
-    }))
-  }));
+  return withDocument(projectId, async (document) => {
+    const sections = readSections(document.content);
+    return NextResponse.json({
+      text: sections.map(sectionText).join("\n\n"),
+      revision: document.revision,
+      sections,
+      blocks: sections.flatMap((section) => section.blocks),
+      evidence: document.provenanceLinks.map((link) => ({
+        id: link.id,
+        targetNodeId: link.targetDocumentBlock.nodeId,
+        sourceDocumentId: link.sourceDocument.id,
+        sourceTitle: link.sourceDocument.title,
+        pageNumber: link.annotationAnchor.pageIndex + 1,
+        selectedText: link.originalSelectedText,
+        status: link.status,
+        note: link.researchNote?.content ?? ""
+      }))
+    });
+  });
 }
 
+// Saves one section: creates it when `sectionId` is absent, otherwise updates its title and/or text.
 export async function PUT(request: Request, context: { params: Promise<{ projectId: string }> }): Promise<NextResponse> {
   const { projectId } = await context.params;
   const payload: unknown = await request.json();
-  if (typeof payload !== "object" || payload === null || !("text" in payload) || typeof payload.text !== "string") {
-    return NextResponse.json({ error: "Document text is required." }, { status: 400 });
+  if (!isSectionUpdate(payload)) {
+    return NextResponse.json({ error: "A section title or text is required." }, { status: 400 });
   }
-  const text = payload.text;
-  if (text.length > 200_000) {
+  if ((payload.text?.length ?? 0) > 200_000 || (payload.title?.length ?? 0) > 300) {
     return NextResponse.json({ error: "Document text exceeds the local editing limit." }, { status: 400 });
   }
   return withDocument(projectId, async (document, database) => {
-    const content = buildDocumentContent(document.content, text);
+    const sections = readSections(document.content);
+    let section = sections.find((candidate) => candidate.id === payload.sectionId);
+    if (payload.sectionId !== undefined && section === undefined) {
+      return NextResponse.json({ error: "Section not found." }, { status: 404 });
+    }
+    section ??= { id: randomUUID(), title: payload.title ?? `Bölüm ${sections.length + 1}`, blocks: [] };
+    const updatedSection = {
+      ...(payload.text === undefined ? section : replaceSectionText(section, payload.text)),
+      title: payload.title ?? section.title
+    };
+    const nextSections = sections.some((candidate) => candidate.id === updatedSection.id)
+      ? sections.map((candidate) => candidate.id === updatedSection.id ? updatedSection : candidate)
+      : [...sections, updatedSection];
     const updated = await database.prisma.mainDocument.update({
       where: { id: document.id },
-      data: { content: content as Prisma.InputJsonValue, revision: { increment: 1 } },
+      data: { content: writeSections(nextSections) as Prisma.InputJsonValue, revision: { increment: 1 } },
       select: { revision: true }
     });
-    return NextResponse.json({ text, revision: updated.revision });
+    return NextResponse.json({ section: updatedSection, revision: updated.revision });
+  });
+}
+
+export async function DELETE(request: Request, context: { params: Promise<{ projectId: string }> }): Promise<NextResponse> {
+  const { projectId } = await context.params;
+  const sectionId = new URL(request.url).searchParams.get("sectionId");
+  if (sectionId === null) return NextResponse.json({ error: "A section is required." }, { status: 400 });
+  return withDocument(projectId, async (document, database) => {
+    const sections = readSections(document.content);
+    if (sections.length <= 1) return NextResponse.json({ error: "A document needs at least one section." }, { status: 400 });
+    const updated = await database.prisma.mainDocument.update({
+      where: { id: document.id },
+      data: { content: writeSections(sections.filter((section) => section.id !== sectionId)) as Prisma.InputJsonValue, revision: { increment: 1 } },
+      select: { revision: true }
+    });
+    return NextResponse.json({ revision: updated.revision });
   });
 }
 
@@ -51,7 +86,7 @@ async function withDocument(
     id: string;
     content: unknown;
     revision: number;
-    provenanceLinks: Array<{ id: string; originalSelectedText: string; targetDocumentBlock: { nodeId: string }; sourceDocument: { id: string; title: string }; annotationAnchor: { pageIndex: number } }>;
+    provenanceLinks: Array<{ id: string; originalSelectedText: string; status: string; researchNote: { content: string } | null; targetDocumentBlock: { nodeId: string }; sourceDocument: { id: string; title: string }; annotationAnchor: { pageIndex: number } }>;
   }, database: ReturnType<typeof createDatabaseClient>) => Promise<NextResponse>
 ): Promise<NextResponse> {
   try {
@@ -70,7 +105,7 @@ async function withDocument(
               revision: true,
               provenanceLinks: {
                 orderBy: { createdAt: "desc" },
-                select: { id: true, originalSelectedText: true, targetDocumentBlock: { select: { nodeId: true } }, sourceDocument: { select: { id: true, title: true } }, annotationAnchor: { select: { pageIndex: true } } }
+                select: { id: true, originalSelectedText: true, status: true, researchNote: { select: { content: true } }, targetDocumentBlock: { select: { nodeId: true } }, sourceDocument: { select: { id: true, title: true } }, annotationAnchor: { select: { pageIndex: true } } }
               }
             }
           }
@@ -84,30 +119,9 @@ async function withDocument(
   }
 }
 
-function extractText(content: unknown): string {
-  return extractBlocks(content).map((block) => block.text).join("\n\n");
-}
-
-function extractBlocks(content: unknown): Array<{ nodeId: string; text: string }> {
-  if (typeof content !== "object" || content === null || !("content" in content) || !Array.isArray(content.content)) return [];
-  return (content.content as unknown[]).flatMap((block) => {
-    if (typeof block !== "object" || block === null || !("attrs" in block) || typeof block.attrs !== "object" || block.attrs === null || !("id" in block.attrs) || typeof block.attrs.id !== "string") return [];
-    const text = "content" in block && Array.isArray(block.content)
-      ? block.content.map((node) => typeof node === "object" && node !== null && "text" in node && typeof node.text === "string" ? node.text : "").join("")
-      : "";
-    return [{ nodeId: block.attrs.id, text }];
-  });
-}
-
-function buildDocumentContent(previousContent: unknown, text: string): Record<string, unknown> {
-  const existingBlocks = extractBlocks(previousContent);
-  const paragraphs = text.split(/\n{2,}/);
-  return {
-    type: "doc",
-    content: paragraphs.map((paragraph, index) => ({
-      type: "paragraph",
-      attrs: { id: existingBlocks[index]?.nodeId ?? randomUUID() },
-      ...(paragraph.length > 0 ? { content: [{ type: "text", text: paragraph }] } : {})
-    }))
-  };
+function isSectionUpdate(value: unknown): value is { sectionId?: string; title?: string; text?: string } {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  const optionalString = (key: string) => record[key] === undefined || typeof record[key] === "string";
+  return optionalString("sectionId") && optionalString("title") && optionalString("text") && (record.title !== undefined || record.text !== undefined);
 }

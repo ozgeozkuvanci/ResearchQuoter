@@ -4,8 +4,14 @@ import { Document, Packer, Paragraph } from "docx";
 import { NextResponse } from "next/server";
 
 import { getDevelopmentProjectContext } from "../../../../../lib/development-context";
+import { type DocumentSection, readSections } from "../../../../../lib/document-sections";
 
 export const runtime = "nodejs";
+
+interface ExportContent {
+  sections: DocumentSection[];
+  bibliography: string[];
+}
 
 export async function GET(request: Request, context: { params: Promise<{ projectId: string }> }): Promise<NextResponse> {
   const { projectId } = await context.params;
@@ -21,7 +27,10 @@ export async function GET(request: Request, context: { params: Promise<{ project
     const document = new Document({
       sections: [{
         children: [
-          ...content.text.split(/\n{2,}/).map((paragraph) => new Paragraph(paragraph)),
+          ...content.sections.flatMap((section) => [
+            ...(section.title.length === 0 ? [] : [new Paragraph({ text: section.title, heading: "Heading1" })]),
+            ...section.blocks.filter((block) => block.text.trim().length > 0).map((block) => new Paragraph(block.text))
+          ]),
           ...(content.bibliography.length === 0 ? [] : [new Paragraph({ text: "Bibliography", heading: "Heading1" }), ...content.bibliography.map((entry) => new Paragraph(entry))])
         ]
       }]
@@ -37,7 +46,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
   }
 }
 
-async function loadExportContent(projectId: string): Promise<{ text: string; bibliography: string[] }> {
+async function loadExportContent(projectId: string): Promise<ExportContent> {
   const developmentContext = await getDevelopmentProjectContext();
   const connectionString = process.env.DATABASE_URL;
   if (connectionString === undefined) throw new Error("DATABASE_URL is required.");
@@ -58,7 +67,7 @@ async function loadExportContent(projectId: string): Promise<{ text: string; bib
     if (project === null || project.mainDocument === null || project.bibliographyConfiguration === null) throw new Error("Project export data not found.");
     const references = uniqueReferences(project.mainDocument.citations.map((citation) => citation.reference));
     const bibliography = references.length === 0 ? [] : [...await new CitationJsProcessor().renderBibliography({ styleId: project.bibliographyConfiguration.citationStyle.styleKey, references })];
-    return { text: extractText(project.mainDocument.content), bibliography };
+    return { sections: readSections(project.mainDocument.content), bibliography };
   } finally {
     await database.close();
   }
@@ -73,15 +82,11 @@ function uniqueReferences(references: ReadonlyArray<{ id: string; cslData: unkno
   });
 }
 
-function extractText(content: unknown): string {
-  if (typeof content !== "object" || content === null || !("content" in content) || !Array.isArray(content.content)) return "";
-  return (content.content as unknown[]).map((block) => typeof block === "object" && block !== null && "content" in block && Array.isArray(block.content)
-    ? block.content.map((node) => typeof node === "object" && node !== null && "text" in node && typeof node.text === "string" ? node.text : "").join("")
-    : "").join("\n\n");
-}
-
-function renderLatex(content: { text: string; bibliography: string[] }): string {
-  const body = content.text.split(/\n{2,}/).map((paragraph) => escapeLatex(paragraph)).join("\n\n");
+function renderLatex(content: ExportContent): string {
+  const body = content.sections.map((section) => [
+    ...(section.title.length === 0 ? [] : [`\\section{${escapeLatex(section.title)}}`]),
+    ...section.blocks.filter((block) => block.text.trim().length > 0).map((block) => escapeLatex(block.text))
+  ].join("\n\n")).join("\n\n");
   const bibliography = content.bibliography.length === 0 ? "" : `\n\n\\section*{Bibliography}\n${content.bibliography.map((entry) => `\\noindent ${escapeLatex(entry)}\\par`).join("\n")}`;
   return `\\documentclass{article}\n\\usepackage[utf8]{inputenc}\n\\begin{document}\n${body}${bibliography}\n\\end{document}\n`;
 }
