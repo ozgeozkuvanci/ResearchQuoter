@@ -16,7 +16,6 @@
     "desktop:dev": "node scripts/desktop-dev.mjs",
     "desktop:pack": "pnpm desktop:build:web && pnpm --filter @research/desktop run bundle",
     "desktop:dist": "pnpm desktop:build:web && pnpm --filter @research/desktop run installer",
-    "desktop:release": "pnpm desktop:build:web && pnpm --filter @research/desktop run release",
     "dev": "pnpm --filter @research/web dev",
     "lint": "eslint .",
     "test": "vitest run --config vitest.config.ts",

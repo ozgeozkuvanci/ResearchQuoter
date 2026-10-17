@@ -19,6 +19,8 @@ The `Desktop installer` GitHub Actions workflow builds the same installer on Win
 
 Installed copies check the public `ozgeozkuvanci/researchquoter-releases` repository for new GitHub
 releases, download them in the background and offer to restart. To publish one, raise `version` in
-`apps/desktop/package.json` and run `pnpm desktop:release` with a `GH_TOKEN` that can write releases to that
-repository. On start the app applies any Prisma migrations its database has not had yet, so schema changes
-reach existing installs; projects and PDFs stay in the user data folder across updates.
+`apps/desktop/package.json`, run `pnpm desktop:dist`, and push `latest.yml`, the `.blockmap` and the installer
+split into parts under 100 MB (`split -b 75M -d -a 2 <exe> <exe>.part`) to `release/` on a `staging/v<version>`
+branch of that repository, with release notes in `NOTES.md`. Its workflow joins the parts, publishes the
+release and deletes the branch. On start the app applies any Prisma migrations its database has not had
+yet, so schema changes reach existing installs; projects and PDFs stay in the user data folder across updates.

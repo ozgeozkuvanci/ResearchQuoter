@@ -8,8 +8,7 @@
   "scripts": {
     "dev": "electron .",
     "bundle": "electron-builder --dir",
-    "installer": "electron-builder --win nsis --publish never",
-    "release": "electron-builder --win nsis --publish always"
+    "installer": "electron-builder --win nsis --publish never"
   },
   "build": {
     "appId": "com.researchworkspace.desktop",
