@@ -493,8 +493,19 @@ blockquote {
 }
 
 .suggestion-controls {
+  align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.link-like {
+  background: transparent;
+  border: 0;
+  color: var(--link);
+  font-size: 0.85rem;
+  padding: 0.2rem;
+  text-decoration: underline;
 }
 
 .alternatives {

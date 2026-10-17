@@ -474,6 +474,13 @@ function ParaphraseDialog({ selection, sourceTitle, sections, defaultSectionId, 
   const [error, setError] = useState<string | null>(null);
   const [paraphrase, setParaphrase] = useState("");
   const [inserting, setInserting] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function copyRequest(): Promise<void> {
+    writeStorage("research-workspace.paraphrase-language", language);
+    await copyText(buildParaphraseRequest(selection.text, note, language));
+    setCopied(true);
+  }
 
   async function loadAlternatives(): Promise<void> {
     setLoading(true);
@@ -521,10 +528,12 @@ function ParaphraseDialog({ selection, sourceTitle, sections, defaultSectionId, 
               <option value="en">İngilizce</option>
               <option value="source">Kaynağın dilinde</option>
             </select>
+            <button className="secondary-button" type="button" onClick={() => void copyRequest()}>{copied ? "Kopyalandı" : "İsteği kopyala"}</button>
             {hasApiKey
               ? <button className="secondary-button" type="button" disabled={loading} onClick={() => void loadAlternatives()}>{loading ? "Öneriler hazırlanıyor…" : alternatives.length === 0 ? "Alternatifler öner" : "Yeniden öner"}</button>
-              : <button className="secondary-button" type="button" onClick={onOpenSettings}>Yapay zekâ önerilerini aç</button>}
+              : <button className="link-like" type="button" onClick={onOpenSettings}>API anahtarım var</button>}
           </div>
+          {copied ? <p className="muted">İsteği ChatGPT'ye ya da Claude'a yapıştırın, beğendiğiniz cevabı aşağıdaki kutuya yapıştırın.</p> : null}
           {error === null ? null : <p className="error" role="alert">{error}</p>}
           {alternatives.length === 0 ? null : <div className="alternatives">
             {alternatives.map((alternative, index) => (
@@ -534,7 +543,7 @@ function ParaphraseDialog({ selection, sourceTitle, sections, defaultSectionId, 
               </button>
             ))}
           </div>}
-          <label htmlFor="paraphrase-text">Benim paraphrase'im (bir öneri seçip düzenleyebilirsiniz)</label>
+          <label htmlFor="paraphrase-text">Benim paraphrase'im (yazın ya da bir öneriyi yapıştırıp düzenleyin)</label>
           <textarea id="paraphrase-text" rows={5} required value={paraphrase} onChange={(event) => setParaphrase(event.target.value)} placeholder="Fikri kendi akademik cümlelerinizle yazın" />
         </> : null}
 
@@ -583,6 +592,34 @@ function SettingsDialog({ hasApiKey, onClose, onSaved }: { hasApiKey: boolean; o
       </form>
     </div>
   );
+}
+
+// A ready-made request for any chat assistant, for people who use the app without an API key.
+function buildParaphraseRequest(text: string, note: string, language: string): string {
+  const target = language === "en" ? "İngilizce" : language === "source" ? "metnin kendi dilinde" : "Türkçe";
+  return [
+    `Aşağıdaki akademik alıntıyı ${target} olarak 4 farklı şekilde paraphrase et.`,
+    "Anlamı, iddiaları ve temkinli ifadeleri aynen koru; yeni bilgi, örnek ya da yorum ekleme.",
+    "Seçenekler yaklaşım olarak farklı olsun: yakın akademik ifade, cümle yapısı değiştirilmiş hali, kısa özet ve daha sade bir anlatım.",
+    "Teknik terimler ve özel adlar dışında alıntıdan art arda dörtten fazla kelime kopyalama. Kaynak, tırnak işareti veya sayfa numarası ekleme.",
+    ...(note.trim() ? [`Bu alıntıyı şu amaçla kullanıyorum: ${note.trim()}`] : []),
+    "",
+    "Alıntı:",
+    `"${text}"`
+  ].join("\n");
+}
+
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
 }
 
 function getErrorMessage(value: unknown): string {
