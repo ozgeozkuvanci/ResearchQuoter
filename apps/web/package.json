@@ -1,0 +1,23 @@
+{
+  "name": "@research/web",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "lint": "eslint .",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@research/application": "workspace:*",
+    "@research/citations": "workspace:*",
+    "@research/contracts": "workspace:*",
+    "@research/db": "workspace:*",
+    "@research/storage": "workspace:*",
+    "docx": "^9.7.1",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "name": "@research/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows desktop shell for Research Workspace",
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "dev": "electron .",
+    "bundle": "electron-builder --dir",
+    "installer": "electron-builder --win nsis --publish never"
+  },
+  "build": {
+    "appId": "com.researchworkspace.desktop",
+    "productName": "Research Workspace",
+    "asar": true,
+    "directories": {
+      "output": "../../dist/desktop"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/.next/standalone",
+        "to": "web"
+      },
+      {
+        "from": "../web/.next/static",
+        "to": "web/apps/web/.next/static"
+      },
+      {
+        "from": "vendor/postgresql",
+        "to": "postgresql"
+      },
+      {
+        "from": "vendor/seed",
+        "to": "seed"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Research-Workspace-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Research Workspace"
+    }
+  }
+}

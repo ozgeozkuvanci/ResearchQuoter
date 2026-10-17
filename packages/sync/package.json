@@ -1,0 +1,11 @@
+{
+  "name": "@research/sync",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "idb": "latest"
+  }
+}

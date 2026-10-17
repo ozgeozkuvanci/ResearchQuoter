@@ -1,0 +1,8 @@
+{
+  "name": "@research/test-support",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "academic-research-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @research/web build",
+    "check:boundaries": "node scripts/check-dependency-boundaries.mjs",
+    "db:generate": "pnpm --filter @research/db db:generate",
+    "db:migrate": "pnpm --filter @research/db db:migrate",
+    "db:validate": "pnpm --filter @research/db db:validate",
+    "desktop:build:web": "pnpm --filter @research/web build && node scripts/prepare-desktop-assets.mjs",
+    "desktop:dev": "node scripts/desktop-dev.mjs",
+    "desktop:pack": "pnpm desktop:build:web && pnpm --filter @research/desktop run bundle",
+    "desktop:dist": "pnpm desktop:build:web && pnpm --filter @research/desktop run installer",
+    "dev": "pnpm --filter @research/web dev",
+    "lint": "eslint .",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "typecheck": "pnpm -r --if-present typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "electron": "43.3.0",
+    "electron-builder": "^26.15.3",
+    "eslint": "latest",
+    "fake-indexeddb": "latest",
+    "globals": "latest",
+    "prisma": "7.8.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "latest",
+    "vitest": "latest"
+  }
+}

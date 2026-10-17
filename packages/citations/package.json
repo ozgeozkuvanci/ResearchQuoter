@@ -1,0 +1,15 @@
+{
+  "name": "@research/citations",
+  "private": true,
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "citation-js": "latest",
+    "zod": "latest"
+  }
+}

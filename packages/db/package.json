@@ -1,0 +1,25 @@
+{
+  "name": "@research/db",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "db:generate": "prisma generate --config prisma.config.ts",
+    "db:migrate": "prisma migrate dev --config prisma.config.ts",
+    "db:validate": "prisma validate --config prisma.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@research/application": "workspace:*",
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "7.8.0",
+    "dotenv": "latest",
+    "pg": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/pg": "latest"
+  }
+}

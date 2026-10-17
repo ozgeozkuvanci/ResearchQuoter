@@ -1,0 +1,13 @@
+* text=auto
+
+# Preserve binary research fixtures and desktop assets byte-for-byte.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.zip binary
+*.tgz binary
+*.exe binary

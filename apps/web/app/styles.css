@@ -1,0 +1,233 @@
+:root {
+  color-scheme: light;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #f7f7f5;
+  color: #1d1d1b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 6rem 1.5rem;
+}
+
+.eyebrow {
+  color: #685c35;
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-size: clamp(2rem, 8vw, 4rem);
+}
+
+p {
+  line-height: 1.6;
+}
+
+.project-launcher {
+  display: grid;
+  gap: 1rem;
+}
+
+.source-intake {
+  border-top: 1px solid #d7d2c7;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+}
+
+.source-library {
+  border-top: 1px solid #d7d2c7;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+}
+
+.project-selector {
+  border-top: 1px solid #d7d2c7;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+}
+
+.document-editor {
+  border-top: 1px solid #d7d2c7;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+}
+
+textarea {
+  border: 1px solid #9c978c;
+  border-radius: 0.4rem;
+  font: inherit;
+  line-height: 1.6;
+  padding: 0.8rem;
+  resize: vertical;
+  width: min(100%, 50rem);
+}
+
+.document-writing-area {
+  background: #fff;
+  border: 1px solid #9c978c;
+  border-radius: 0.4rem;
+  line-height: 1.6;
+  max-height: 34rem;
+  min-height: 22rem;
+  overflow-y: auto;
+  padding: 0.8rem;
+  width: min(100%, 50rem);
+}
+
+.document-writing-area[contenteditable="false"] {
+  background: #f1f0ec;
+  color: #77736a;
+}
+
+.document-writing-area p {
+  margin: 0 0 1rem;
+}
+
+h2 {
+  margin: 0;
+}
+
+form {
+  display: grid;
+  gap: 0.65rem;
+  max-width: 28rem;
+}
+
+input,
+select,
+textarea,
+button {
+  border: 1px solid #9c978c;
+  border-radius: 0.4rem;
+  font: inherit;
+  padding: 0.7rem 0.8rem;
+}
+
+button {
+  width: fit-content;
+  border-color: #2f3a2c;
+  background: #2f3a2c;
+  color: #fff;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.success {
+  color: #21603a;
+}
+
+.error {
+  color: #8a2222;
+}
+
+.source-meta {
+  color: #605d57;
+  font-size: 0.9rem;
+}
+
+.export-links a {
+  color: #244d71;
+  margin-right: 0.55rem;
+}
+
+.pdf-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.8rem 0;
+}
+
+.pdf-controls input {
+  width: 5rem;
+}
+
+.pdf-controls a {
+  color: #244d71;
+}
+
+.pdf-viewer {
+  background: #fff;
+  border: 1px solid #9c978c;
+  border-radius: 0.4rem;
+  height: min(70vh, 52rem);
+  width: 100%;
+}
+
+.quote-capture,
+.capture-list,
+.evidence-links,
+.bibliography {
+  border-top: 1px solid #e1ddd3;
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.capture-list article {
+  background: #fffdf3;
+  border-left: 4px solid #d0ad33;
+  margin: 0.75rem 0;
+  padding: 0.75rem 1rem;
+}
+
+.capture-list article button {
+  margin: 0.25rem 0.35rem 0.25rem 0;
+}
+
+.secondary-button {
+  background: transparent;
+  border-color: #2f3a2c;
+  color: #2f3a2c;
+}
+
+.paraphrase-form {
+  margin-top: 0.8rem;
+}
+
+.link-button {
+  background: transparent;
+  border-color: #244d71;
+  color: #244d71;
+  margin: 0.2rem 0.35rem 0.2rem 0;
+}
+
+.inline-evidence-token {
+  background: #e5f0fa;
+  border: 0;
+  color: #173f63;
+  border-bottom: 2px solid #5a87b0;
+  border-radius: 0.2rem;
+  cursor: pointer;
+  font: inherit;
+  padding: 0.1rem 0.2rem;
+  text-align: left;
+}
+
+.inline-evidence-token:hover,
+.inline-evidence-token:focus-visible {
+  background: #cfe4f5;
+  outline: 3px solid #e1b634;
+  outline-offset: 2px;
+}
+
+.bibliography p {
+  margin-left: 1.5rem;
+  text-indent: -1.5rem;
+}

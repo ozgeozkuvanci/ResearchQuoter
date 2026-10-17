@@ -1,0 +1,417 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PdfAssetStatus {
+  STAGING
+  AVAILABLE
+  QUARANTINED
+  DELETED
+}
+
+enum AnnotationType {
+  TEXT_HIGHLIGHT
+  STICKY_NOTE
+  REGION
+}
+
+enum AnnotationSelectorType {
+  TEXT
+  REGION
+  OCR_TEXT
+}
+
+enum ProvenanceStatus {
+  VERBATIM
+  NORMALIZED
+  TARGET_MODIFIED
+  PARAPHRASE
+  SOURCE_ARCHIVED
+  UNRESOLVED
+}
+
+enum ReferenceStatus {
+  DRAFT
+  CONFIRMED
+  MERGED
+  ARCHIVED
+}
+
+enum AuditEventType {
+  PROJECT_CREATED
+  PDF_REGISTERED
+  REFERENCE_CONFIRMED
+  ANNOTATION_CREATED
+  PROVENANCE_CREATED
+  DOCUMENT_RESTORED
+}
+
+model User {
+  id          String       @id @default(uuid()) @db.Uuid
+  oidcIssuer  String
+  oidcSubject String
+  email       String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+  workspaces  Workspace[]  @relation("WorkspaceOwner")
+  auditEvents AuditEvent[] @relation("AuditActor")
+
+  @@unique([oidcIssuer, oidcSubject])
+  @@index([email])
+}
+
+model Workspace {
+  id          String       @id @default(uuid()) @db.Uuid
+  ownerId     String       @db.Uuid
+  name        String
+  revision    Int          @default(1)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+  owner       User         @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  projects    AcademicProject[]
+  references  Reference[]
+  pdfAssets   PdfAsset[]
+  auditEvents AuditEvent[]
+
+  @@index([ownerId, deletedAt])
+}
+
+model AcademicProject {
+  id                       String                    @id @default(uuid()) @db.Uuid
+  workspaceId              String                    @db.Uuid
+  name                     String
+  serverRevision           BigInt                    @default(0)
+  revision                 Int                       @default(1)
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  deletedAt                DateTime?
+  workspace                Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  mainDocument             MainDocument?
+  bibliographyConfiguration BibliographyConfiguration?
+  sourceDocuments          SourceDocument[]
+  annotations              Annotation[]
+  documentBlocks           DocumentBlock[]
+  provenanceLinks          ProvenanceLink[]
+  auditEvents              AuditEvent[]
+
+  @@index([workspaceId, deletedAt])
+}
+
+model MainDocument {
+  id            String            @id @default(uuid()) @db.Uuid
+  academicProjectId String         @unique @db.Uuid
+  schemaVersion Int                @default(1)
+  content       Json
+  revision      Int                @default(1)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  project       AcademicProject    @relation(fields: [academicProjectId], references: [id], onDelete: Restrict)
+  versions      DocumentVersion[]
+  sections      Section[]
+  blocks        DocumentBlock[]
+  citations     CitationUsage[]
+  provenanceLinks ProvenanceLink[]
+}
+
+model DocumentVersion {
+  id                String       @id @default(uuid()) @db.Uuid
+  mainDocumentId    String       @db.Uuid
+  parentVersionId   String?      @db.Uuid
+  schemaVersion     Int
+  content           Json
+  contentChecksum   String
+  provenanceHash    String
+  createdAt         DateTime     @default(now())
+  mainDocument      MainDocument @relation(fields: [mainDocumentId], references: [id], onDelete: Restrict)
+  parentVersion     DocumentVersion? @relation("DocumentVersionParent", fields: [parentVersionId], references: [id], onDelete: Restrict)
+  childVersions     DocumentVersion[] @relation("DocumentVersionParent")
+
+  @@index([mainDocumentId, createdAt])
+}
+
+model Section {
+  id             String       @id @default(uuid()) @db.Uuid
+  mainDocumentId String       @db.Uuid
+  parentSectionId String?     @db.Uuid
+  nodeId         String
+  heading        String
+  level          Int
+  sortOrder      Int
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  mainDocument   MainDocument @relation(fields: [mainDocumentId], references: [id], onDelete: Cascade)
+  parentSection  Section?     @relation("SectionParent", fields: [parentSectionId], references: [id], onDelete: Restrict)
+  childSections  Section[]    @relation("SectionParent")
+  blocks         DocumentBlock[]
+
+  @@unique([mainDocumentId, nodeId])
+  @@unique([mainDocumentId, parentSectionId, sortOrder])
+}
+
+model DocumentBlock {
+  id                String          @id @default(uuid()) @db.Uuid
+  academicProjectId String          @db.Uuid
+  mainDocumentId    String          @db.Uuid
+  sectionId         String?         @db.Uuid
+  nodeId            String
+  blockType         String
+  contentHash       String
+  revision          Int             @default(1)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  deletedAt         DateTime?
+  project           AcademicProject @relation(fields: [academicProjectId], references: [id], onDelete: Restrict)
+  mainDocument      MainDocument    @relation(fields: [mainDocumentId], references: [id], onDelete: Restrict)
+  section           Section?        @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  citationUsages    CitationUsage[]
+  provenanceLinks   ProvenanceLink[]
+
+  @@unique([mainDocumentId, nodeId])
+  @@index([academicProjectId, deletedAt])
+}
+
+model Reference {
+  id          String          @id @default(uuid()) @db.Uuid
+  workspaceId String          @db.Uuid
+  status      ReferenceStatus @default(DRAFT)
+  cslData     Json
+  title       String?
+  doi         String?
+  revision    Int             @default(1)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  contributors Contributor[]
+  sourceDocuments SourceDocument[]
+  citationUsages CitationUsage[]
+  provenanceLinks ProvenanceLink[]
+
+  @@index([workspaceId, deletedAt])
+  @@index([workspaceId, doi])
+}
+
+model Contributor {
+  id          String    @id @default(uuid()) @db.Uuid
+  referenceId String    @db.Uuid
+  role        String
+  position    Int
+  familyName  String?
+  givenName   String?
+  literalName String?
+  reference   Reference @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+
+  @@unique([referenceId, role, position])
+}
+
+model PdfAsset {
+  id                 String         @id @default(uuid()) @db.Uuid
+  workspaceId        String         @db.Uuid
+  objectKey          String         @unique
+  checksum           String
+  byteSize           BigInt
+  mimeType           String
+  originalFilename   String
+  status             PdfAssetStatus @default(STAGING)
+  createdAt          DateTime       @default(now())
+  verifiedAt         DateTime?
+  deletedAt          DateTime?
+  workspace          Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  sourceVersions     SourceDocumentVersion[]
+  annotations        Annotation[]
+  anchors            AnnotationAnchor[]
+  provenanceLinks    ProvenanceLink[]
+
+  @@unique([workspaceId, checksum])
+}
+
+model SourceDocument {
+  id                String          @id @default(uuid()) @db.Uuid
+  academicProjectId String          @db.Uuid
+  referenceId       String?         @db.Uuid
+  title             String
+  revision          Int             @default(1)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  deletedAt         DateTime?
+  project           AcademicProject @relation(fields: [academicProjectId], references: [id], onDelete: Restrict)
+  reference         Reference?      @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  versions          SourceDocumentVersion[]
+  annotations       Annotation[]
+  provenanceLinks   ProvenanceLink[]
+
+  @@index([academicProjectId, deletedAt])
+  @@index([referenceId])
+}
+
+model SourceDocumentVersion {
+  id               String         @id @default(uuid()) @db.Uuid
+  sourceDocumentId String         @db.Uuid
+  pdfAssetId       String         @db.Uuid
+  versionNumber    Int
+  createdAt        DateTime       @default(now())
+  sourceDocument   SourceDocument @relation(fields: [sourceDocumentId], references: [id], onDelete: Restrict)
+  pdfAsset         PdfAsset       @relation(fields: [pdfAssetId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceDocumentId, versionNumber])
+  @@unique([sourceDocumentId, pdfAssetId])
+}
+
+model Annotation {
+  id                String          @id @default(uuid()) @db.Uuid
+  academicProjectId String          @db.Uuid
+  sourceDocumentId  String          @db.Uuid
+  pdfAssetId        String          @db.Uuid
+  type              AnnotationType
+  color             String?
+  revision          Int             @default(1)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  deletedAt         DateTime?
+  project           AcademicProject @relation(fields: [academicProjectId], references: [id], onDelete: Restrict)
+  sourceDocument    SourceDocument  @relation(fields: [sourceDocumentId], references: [id], onDelete: Restrict)
+  pdfAsset          PdfAsset        @relation(fields: [pdfAssetId], references: [id], onDelete: Restrict)
+  anchors           AnnotationAnchor[]
+  researchNotes     ResearchNote[]
+  provenanceLinks   ProvenanceLink[]
+
+  @@index([academicProjectId, deletedAt])
+  @@index([sourceDocumentId, pdfAssetId])
+}
+
+model AnnotationAnchor {
+  id                String                 @id @default(uuid()) @db.Uuid
+  annotationId      String                 @db.Uuid
+  pdfAssetId        String                 @db.Uuid
+  pdfChecksum       String
+  pageIndex         Int
+  pageLabel         String?
+  selectorType      AnnotationSelectorType
+  rects             Json
+  selectedText      String?
+  selectedTextHash  String?
+  prefixText        String?
+  suffixText        String?
+  pageTextFingerprint String?
+  createdAt         DateTime               @default(now())
+  annotation        Annotation             @relation(fields: [annotationId], references: [id], onDelete: Restrict)
+  pdfAsset          PdfAsset               @relation(fields: [pdfAssetId], references: [id], onDelete: Restrict)
+  provenanceLinks   ProvenanceLink[]
+
+  @@index([annotationId, pageIndex])
+}
+
+model ResearchNote {
+  id           String     @id @default(uuid()) @db.Uuid
+  annotationId String     @db.Uuid
+  content      String
+  revision     Int        @default(1)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+  annotation   Annotation @relation(fields: [annotationId], references: [id], onDelete: Restrict)
+  provenanceLinks ProvenanceLink[]
+}
+
+model CitationStyle {
+  id          String    @id @default(uuid()) @db.Uuid
+  styleKey    String
+  checksum    String
+  cslXml      String
+  createdAt   DateTime  @default(now())
+  configurations BibliographyConfiguration[]
+
+  @@unique([styleKey, checksum])
+}
+
+model BibliographyConfiguration {
+  id                String          @id @default(uuid()) @db.Uuid
+  academicProjectId String          @unique @db.Uuid
+  citationStyleId   String          @db.Uuid
+  locale            String          @default("en-US")
+  includeMode       String          @default("cited_only")
+  noteNumberingScope String         @default("chapter")
+  revision          Int             @default(1)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  project           AcademicProject @relation(fields: [academicProjectId], references: [id], onDelete: Restrict)
+  citationStyle     CitationStyle   @relation(fields: [citationStyleId], references: [id], onDelete: Restrict)
+}
+
+model CitationUsage {
+  id                String        @id @default(uuid()) @db.Uuid
+  mainDocumentId    String        @db.Uuid
+  documentBlockId   String        @db.Uuid
+  referenceId       String        @db.Uuid
+  nodeId            String
+  locatorLabel      String?
+  locatorValue      String?
+  prefix            String?
+  suffix            String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  deletedAt         DateTime?
+  mainDocument      MainDocument  @relation(fields: [mainDocumentId], references: [id], onDelete: Restrict)
+  documentBlock     DocumentBlock @relation(fields: [documentBlockId], references: [id], onDelete: Restrict)
+  reference         Reference     @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+
+  @@unique([mainDocumentId, nodeId])
+  @@index([documentBlockId, deletedAt])
+}
+
+model ProvenanceLink {
+  id                   String           @id @default(uuid()) @db.Uuid
+  academicProjectId    String           @db.Uuid
+  mainDocumentId       String           @db.Uuid
+  targetDocumentBlockId String           @db.Uuid
+  referenceId          String           @db.Uuid
+  sourceDocumentId     String           @db.Uuid
+  pdfAssetId           String           @db.Uuid
+  pdfChecksum          String
+  annotationId         String           @db.Uuid
+  annotationAnchorId   String           @db.Uuid
+  researchNoteId       String?          @db.Uuid
+  originalSelectedText String
+  insertedTextHash     String
+  targetContentHashAtLink String
+  status               ProvenanceStatus @default(VERBATIM)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  project              AcademicProject  @relation(fields: [academicProjectId], references: [id], onDelete: Restrict)
+  mainDocument         MainDocument     @relation(fields: [mainDocumentId], references: [id], onDelete: Restrict)
+  targetDocumentBlock  DocumentBlock    @relation(fields: [targetDocumentBlockId], references: [id], onDelete: Restrict)
+  reference            Reference        @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  sourceDocument       SourceDocument   @relation(fields: [sourceDocumentId], references: [id], onDelete: Restrict)
+  pdfAsset             PdfAsset         @relation(fields: [pdfAssetId], references: [id], onDelete: Restrict)
+  annotation           Annotation       @relation(fields: [annotationId], references: [id], onDelete: Restrict)
+  annotationAnchor     AnnotationAnchor @relation(fields: [annotationAnchorId], references: [id], onDelete: Restrict)
+  researchNote         ResearchNote?    @relation(fields: [researchNoteId], references: [id], onDelete: Restrict)
+
+  @@index([academicProjectId, targetDocumentBlockId])
+  @@index([annotationAnchorId])
+}
+
+model AuditEvent {
+  id                String          @id @default(uuid()) @db.Uuid
+  workspaceId       String          @db.Uuid
+  academicProjectId String?         @db.Uuid
+  actorId           String?         @db.Uuid
+  eventType         AuditEventType
+  targetType        String
+  targetId          String
+  metadata          Json?
+  createdAt         DateTime        @default(now())
+  workspace         Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  project           AcademicProject? @relation(fields: [academicProjectId], references: [id], onDelete: Restrict)
+  actor             User?           @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, createdAt])
+  @@index([academicProjectId, createdAt])
+}
