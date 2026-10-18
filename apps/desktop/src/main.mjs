@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import path from "node:path";
 
-import { app, BrowserWindow, dialog, session, shell } from "electron";
+import { app, BrowserWindow, dialog, nativeTheme, session, shell } from "electron";
 
 import { startAutomaticUpdates } from "./updater.mjs";
 
@@ -258,7 +258,7 @@ function isApplicationUrl(url) {
 
 function secureWindowOptions() {
   return {
-    backgroundColor: "#f5f3ec",
+    backgroundColor: "#ffffff",
     height: 900,
     minHeight: 700,
     minWidth: 1000,
@@ -312,6 +312,8 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(async () => {
+  // The interface is designed light only; a dark Windows theme would otherwise recolour form fields.
+  nativeTheme.themeSource = "light";
   app.setAppUserModelId("com.researchworkspace.desktop");
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   try {

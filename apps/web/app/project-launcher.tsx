@@ -69,6 +69,7 @@ interface Alternative {
 }
 
 const activeProjectKey = "research-workspace.active-project";
+const readerWidthKey = "research-workspace.reader-width";
 
 async function fetchBibliography(projectId: string): Promise<string[]> {
   const response = await fetch(`/api/projects/${projectId}/bibliography`);
@@ -92,6 +93,8 @@ export function ProjectLauncher() {
   const [openedEvidence, setOpenedEvidence] = useState<EvidenceLink | null>(null);
   const [showSourceForm, setShowSourceForm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showProjectForm, setShowProjectForm] = useState(false);
+  const [readerWidth, setReaderWidth] = useState(0);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [pending, setPending] = useState<PendingSelection | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "unsaved">("saved");
@@ -140,6 +143,7 @@ export function ProjectLauncher() {
   }, []);
 
   useEffect(() => {
+    setReaderWidth(Number(readStorage(readerWidthKey)) || 0);
     void loadProjects();
     void fetch("/api/settings").then(async (response) => response.ok ? response.json() : { hasApiKey: false }).then((payload: { hasApiKey: boolean }) => setHasApiKey(payload.hasApiKey));
   }, [loadProjects]);
@@ -323,24 +327,27 @@ export function ProjectLauncher() {
     .map((link) => ({ id: link.id, pageNumber: link.pageNumber, text: link.selectedText, kind: link.status === "PARAPHRASE" ? "paraphrase" as const : "quote" as const }));
 
   return (
-    <div className="workspace">
+    <div className="workspace" style={readerWidth > 0 ? { "--reader-width": `${readerWidth}px` } as React.CSSProperties : undefined}>
       <header className="topbar">
-        <strong className="brand">Research Workspace</strong>
+        <strong className="brand"><span className="brand-mark" aria-hidden="true">❞</span>Research Workspace</strong>
         <select aria-label="Aktif proje" value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
           {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select>
-        <form className="inline-form" onSubmit={createProject}>
-          <input aria-label="Yeni proje adı" placeholder="Yeni proje" value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} maxLength={160} required />
-          <button className="secondary-button" type="submit">Oluştur</button>
-        </form>
+        {showProjectForm ? (
+          <form className="inline-form" onSubmit={(event) => { void createProject(event).then(() => setShowProjectForm(false)); }}>
+            <input aria-label="Yeni proje adı" placeholder="Proje adı" value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} maxLength={160} required autoFocus />
+            <button type="submit">Oluştur</button>
+            <button className="ghost-button" type="button" onClick={() => setShowProjectForm(false)}>Vazgeç</button>
+          </form>
+        ) : <button className="ghost-button" type="button" onClick={() => setShowProjectForm(true)}>+ Yeni proje</button>}
         <span className="spacer" />
-        {selectedProjectId ? <span className="export-links">Dışa aktar: <a href={`/api/projects/${selectedProjectId}/export?format=docx`}>Word</a> <a href={`/api/projects/${selectedProjectId}/export?format=latex`}>LaTeX</a></span> : null}
-        <button className="secondary-button" type="button" onClick={() => setShowSettings(true)}>Ayarlar</button>
+        {selectedProjectId ? <span className="export-links"><span className="muted">Dışa aktar</span><a className="pill-link" href={`/api/projects/${selectedProjectId}/export?format=docx`}>Word</a><a className="pill-link" href={`/api/projects/${selectedProjectId}/export?format=latex`}>LaTeX</a></span> : null}
+        <button className="ghost-button" type="button" onClick={() => setShowSettings(true)}>⚙ Ayarlar</button>
       </header>
 
       {message === null ? null : <p className={`toast ${message.kind}`} role="status" onClick={() => setMessage(null)}>{message.text}</p>}
 
-      <aside className="sidebar">
+      <aside className="app-sidebar">
         <div className="sidebar-heading">
           <h2>Bölümler</h2>
           <button className="icon-button" type="button" title="Yeni bölüm" onClick={() => void addSection()}>+</button>
@@ -366,7 +373,7 @@ export function ProjectLauncher() {
             <li key={source.id} className={source.id === selectedSourceId ? "active" : ""}>
               <button type="button" onClick={() => { setSelectedSourceId(source.id); setOpenedEvidence(null); }}>
                 {source.title}
-                <span className="muted">{source.author ?? ""}{source.captures.length > 0 ? ` · ${source.captures.length} alıntı` : ""}</span>
+                <span className="muted">{[source.author, source.captures.length > 0 ? `${source.captures.length} alıntı` : undefined].filter(Boolean).join(" · ")}</span>
               </button>
             </li>
           ))}
@@ -374,7 +381,7 @@ export function ProjectLauncher() {
       </aside>
 
       <main className="editor-column">
-        {selectedSection === undefined ? null : <>
+        {selectedSection === undefined ? null : <div className="editor-page">
           <input
             key={`title-${selectedSection.id}`}
             className="section-title"
@@ -402,8 +409,10 @@ export function ProjectLauncher() {
             <summary>Kaynakça (APA 7)</summary>
             {bibliography.map((entry, index) => <p key={`${entry}-${index}`}>{entry}</p>)}
           </details>}
-        </>}
+        </div>}
       </main>
+
+      <PaneSplitter onResize={(width) => { setReaderWidth(width); writeStorage(readerWidthKey, String(Math.round(width))); }} />
 
       <section className="reader-column" aria-label="PDF okuyucu">
         {openedEvidence === null ? null : (
@@ -438,6 +447,24 @@ export function ProjectLauncher() {
       {showSettings ? <SettingsDialog hasApiKey={hasApiKey} onClose={() => setShowSettings(false)} onSaved={(value) => { setHasApiKey(value); setShowSettings(false); }} /> : null}
     </div>
   );
+}
+
+// Dragging the bar between the writing area and the PDF changes how wide the PDF is.
+function PaneSplitter({ onResize }: { onResize: (readerWidth: number) => void }) {
+  function startDrag(event: React.PointerEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    // Leaves room for the sidebar (15.5rem) and the writing area's minimum width (24rem).
+    const move = (moveEvent: PointerEvent) => onResize(Math.min(window.innerWidth - 660, Math.max(320, window.innerWidth - moveEvent.clientX)));
+    const stop = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+  }
+  return <div className="pane-splitter" role="separator" aria-orientation="vertical" title="Sürükleyerek PDF alanını genişletin" onPointerDown={startDrag} />;
 }
 
 // Choosing a PDF fills in its title, authors and year from the file (and Crossref, when it has a DOI);
@@ -661,7 +688,7 @@ function ParaphraseDialog({ selection, sourceTitle, sections, defaultSectionId, 
 
   return (
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <form className="dialog" role="dialog" aria-modal="true" aria-labelledby="paraphrase-heading" onSubmit={submit}>
+      <form className="app-dialog" role="dialog" aria-modal="true" aria-labelledby="paraphrase-heading" onSubmit={submit}>
         <div className="dialog-header">
           <h2 id="paraphrase-heading">{isParaphrase ? "Paraphrase" : "Alıntı ekle"}</h2>
           <button className="delete-button" type="button" title="Kapat" onClick={onClose}>×</button>
@@ -760,7 +787,7 @@ function SettingsDialog({ hasApiKey, onClose, onSaved }: { hasApiKey: boolean; o
 
   return (
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
+      <div className="app-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
         <div className="dialog-header">
           <h2 id="settings-heading">Ayarlar</h2>
           <button className="delete-button" type="button" title="Kapat" onClick={onClose}>×</button>
