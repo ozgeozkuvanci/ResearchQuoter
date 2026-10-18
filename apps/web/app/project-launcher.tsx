@@ -40,6 +40,14 @@ interface EvidenceLink {
 interface DocumentBlock {
   nodeId: string;
   text: string;
+  links?: Array<{ linkId: string; offset: number }>;
+}
+
+// A paragraph as read back from the writing area; nodeId is missing for paragraphs typed there.
+interface EditorParagraph {
+  nodeId?: string;
+  text: string;
+  links: Array<{ linkId: string; offset: number }>;
 }
 
 interface DocumentSection {
@@ -62,6 +70,12 @@ interface Alternative {
 
 const activeProjectKey = "research-workspace.active-project";
 
+async function fetchBibliography(projectId: string): Promise<string[]> {
+  const response = await fetch(`/api/projects/${projectId}/bibliography`);
+  const payload = response.ok ? await response.json() as { entries?: string[] } : {};
+  return payload.entries ?? [];
+}
+
 export function ProjectLauncher() {
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
@@ -82,7 +96,7 @@ export function ProjectLauncher() {
   const [pending, setPending] = useState<PendingSelection | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "unsaved">("saved");
   const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
-  const editorTextRef = useRef("");
+  const editorParagraphsRef = useRef<EditorParagraph[]>([]);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const selectedSection = sections.find((section) => section.id === selectedSectionId) ?? sections[0];
@@ -110,9 +124,7 @@ export function ProjectLauncher() {
     setEvidence(payload.evidence ?? []);
     setDocumentRevision(payload.revision ?? 0);
     setSelectedSectionId((current) => payload.sections?.some((section) => section.id === current) ? current : payload.sections?.[0]?.id ?? "");
-    const bibliographyResponse = await fetch(`/api/projects/${projectId}/bibliography`);
-    const bibliographyPayload = bibliographyResponse.ok ? await bibliographyResponse.json() as { entries?: string[] } : {};
-    setBibliography(bibliographyPayload.entries ?? []);
+    setBibliography(await fetchBibliography(projectId));
   }, []);
 
   const loadSources = useCallback(async (projectId: string, preferredId?: string) => {
@@ -151,7 +163,7 @@ export function ProjectLauncher() {
     if (kind === "success") setTimeout(() => setMessage((current) => current?.text === text ? null : current), 4000);
   }
 
-  async function saveSection(update: { title?: string; text?: string }, sectionId = selectedSection?.id): Promise<boolean> {
+  async function saveSection(update: { title?: string; paragraphs?: EditorParagraph[] }, sectionId = selectedSection?.id): Promise<boolean> {
     if (!selectedProjectId || sectionId === undefined) return false;
     setSaveState("saving");
     const response = await fetch(`/api/projects/${selectedProjectId}/document`, {
@@ -164,9 +176,17 @@ export function ProjectLauncher() {
       notify("error", getErrorMessage(await response.json().catch(() => null)));
       return false;
     }
-    const payload = await response.json() as { section: DocumentSection };
+    const payload = await response.json() as { section: DocumentSection; removedLinkIds?: string[] };
     setSections((current) => current.map((section) => section.id === payload.section.id ? payload.section : section));
     setSaveState("saved");
+    const removed = payload.removedLinkIds ?? [];
+    if (removed.length > 0) {
+      setEvidence((current) => current.filter((link) => !removed.includes(link.id)));
+      setOpenedEvidence((current) => current !== null && removed.includes(current.id) ? null : current);
+      notify("success", removed.length === 1 ? "Alıntı işareti silindi, PDF bağlantısı da kaldırıldı." : `${removed.length} alıntı işareti silindi, PDF bağlantıları da kaldırıldı.`);
+      void loadSources(selectedProjectId);
+      void fetchBibliography(selectedProjectId).then(setBibliography);
+    }
     return true;
   }
 
@@ -174,16 +194,16 @@ export function ProjectLauncher() {
     if (saveTimerRef.current === undefined) return;
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = undefined;
-    await saveSection({ text: editorTextRef.current });
+    await saveSection({ paragraphs: editorParagraphsRef.current });
   }
 
-  function handleEditorInput(text: string): void {
-    editorTextRef.current = text;
+  function handleEditorInput(paragraphs: EditorParagraph[]): void {
+    editorParagraphsRef.current = paragraphs;
     setSaveState("unsaved");
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       saveTimerRef.current = undefined;
-      void saveSection({ text: editorTextRef.current });
+      void saveSection({ paragraphs: editorParagraphsRef.current });
     }, 800);
   }
 
@@ -198,7 +218,7 @@ export function ProjectLauncher() {
     const response = await fetch(`/api/projects/${selectedProjectId}/document`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: `Bölüm ${sections.length + 1}`, text: "" })
+      body: JSON.stringify({ title: `Bölüm ${sections.length + 1}`, paragraphs: [] })
     });
     if (!response.ok) {
       notify("error", getErrorMessage(await response.json().catch(() => null)));
@@ -296,7 +316,11 @@ export function ProjectLauncher() {
     );
   }
 
-  const sectionEvidence = evidence.filter((link) => selectedSection?.blocks.some((block) => block.nodeId === link.targetNodeId));
+  const sectionLinkIds = new Set(selectedSection?.blocks.flatMap((block) => (block.links ?? []).map((link) => link.linkId)) ?? []);
+  const sectionEvidence = evidence.filter((link) => sectionLinkIds.has(link.id));
+  const highlights = evidence
+    .filter((link) => link.sourceDocumentId === selectedSourceId)
+    .map((link) => ({ id: link.id, pageNumber: link.pageNumber, text: link.selectedText, kind: link.status === "PARAPHRASE" ? "paraphrase" as const : "quote" as const }));
 
   return (
     <div className="workspace">
@@ -392,7 +416,7 @@ export function ProjectLauncher() {
         )}
         {selectedSource === undefined
           ? <p className="muted reader-empty">Bir PDF seçin ya da soldan + ile ekleyin.</p>
-          : <PdfReader url={selectedSource.pdfUrl} jumpToPage={jumpToPage} onSelection={handleSelection} />}
+          : <PdfReader url={selectedSource.pdfUrl} jumpToPage={jumpToPage} highlights={highlights} onSelection={handleSelection} />}
       </section>
 
       {pending === null || selectedSection === undefined ? null : (
@@ -475,14 +499,26 @@ function SourceForm({ onSubmit }: { onSubmit: (form: FormData) => Promise<boolea
 
 // The writing area keeps the paragraphs it was mounted with: autosaves must not re-render the text
 // under the cursor. It remounts (via its key) when another section opens or a citation is inserted.
+// Every quote ends in a marker that cannot be typed into: the text around it stays editable, and
+// deleting the marker deletes the quote's link to the PDF.
 function EditorArea({ blocks, evidence, onInput, onBlur, onOpenEvidence }: {
   blocks: DocumentBlock[];
   evidence: EvidenceLink[];
-  onInput: (text: string) => void;
+  onInput: (paragraphs: EditorParagraph[]) => void;
   onBlur: () => void;
   onOpenEvidence: (link: EvidenceLink) => void;
 }) {
-  const [initialBlocks] = useState(blocks);
+  const [initial] = useState(() => ({ blocks, evidence }));
+  const evidenceRef = useRef(evidence);
+  evidenceRef.current = evidence;
+
+  function openMarker(target: EventTarget): boolean {
+    const marker = target instanceof Element ? target.closest("[data-link-id]") : null;
+    const link = evidenceRef.current.find((candidate) => candidate.id === marker?.getAttribute("data-link-id"));
+    if (link !== undefined) onOpenEvidence(link);
+    return marker !== null;
+  }
+
   return (
     <div
       className="document-writing-area"
@@ -492,17 +528,82 @@ function EditorArea({ blocks, evidence, onInput, onBlur, onOpenEvidence }: {
       role="textbox"
       suppressContentEditableWarning
       data-placeholder="Yazmaya başlayın. PDF'te bir metni seçip sağ tıklayarak paraphrase'ini buraya ekleyebilirsiniz."
-      onInput={(event) => onInput(event.currentTarget.innerText)}
+      onInput={(event) => onInput(readEditorParagraphs(event.currentTarget))}
+      onMouseDown={(event) => { if (openMarker(event.target)) event.preventDefault(); }}
       onBlur={onBlur}
     >
-      {initialBlocks.map((block) => {
-        const link = evidence.find((candidate) => candidate.targetNodeId === block.nodeId);
-        return link === undefined
-          ? <p key={block.nodeId}>{block.text}</p>
-          : <p key={block.nodeId}><button className={`inline-evidence-token ${link.status === "PARAPHRASE" ? "paraphrase" : "quote"}`} type="button" contentEditable={false} onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); onOpenEvidence(link); }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); }} title={`${link.sourceTitle}, s. ${link.pageNumber} — tıklayınca kaynağı açar`}>{block.text}</button></p>;
-      })}
+      {initial.blocks.map((block) => (
+        <p key={block.nodeId} data-node-id={block.nodeId}>
+          {paragraphParts(block).map((part, index) => typeof part === "string"
+            ? part
+            : <EvidenceMarkerChip key={`${part.linkId}-${index}`} linkId={part.linkId} link={initial.evidence.find((link) => link.id === part.linkId)} />)}
+        </p>
+      ))}
     </div>
   );
+}
+
+function EvidenceMarkerChip({ linkId, link }: { linkId: string; link: EvidenceLink | undefined }) {
+  const kind = link?.status === "PARAPHRASE" ? "paraphrase" : "quote";
+  return (
+    <span
+      className={`evidence-marker ${kind}`}
+      contentEditable={false}
+      data-link-id={linkId}
+      title={link === undefined ? "Alıntı" : `${kind === "quote" ? "Alıntı" : "Paraphrase"}: ${link.sourceTitle}, s. ${link.pageNumber}. Tıklayınca PDF'te gösterir; silerseniz bağlantı da silinir.`}
+    >
+      ❞{link === undefined ? "" : ` s.${link.pageNumber}`}
+    </span>
+  );
+}
+
+function paragraphParts(block: DocumentBlock): Array<string | { linkId: string }> {
+  const parts: Array<string | { linkId: string }> = [];
+  let position = 0;
+  for (const link of [...(block.links ?? [])].sort((a, b) => a.offset - b.offset)) {
+    if (link.offset > position) parts.push(block.text.slice(position, link.offset));
+    parts.push({ linkId: link.linkId });
+    position = Math.max(position, link.offset);
+  }
+  if (position < block.text.length) parts.push(block.text.slice(position));
+  return parts;
+}
+
+// Reads the writing area back into paragraphs, recording where each marker sits in the text.
+function readEditorParagraphs(root: HTMLElement): EditorParagraph[] {
+  const paragraphs: EditorParagraph[] = [];
+  let loose: EditorParagraph | null = null;
+  const collect = (node: Node, paragraph: EditorParagraph): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      paragraph.text += (node.textContent ?? "").replace(/\u00a0/g, " ").replace(/\u200b/g, "");
+      return;
+    }
+    if (!(node instanceof HTMLElement)) return;
+    const linkId = node.getAttribute("data-link-id");
+    if (linkId !== null) {
+      paragraph.links.push({ linkId, offset: paragraph.text.length });
+      return;
+    }
+    if (node.tagName === "BR") return;
+    node.childNodes.forEach((child) => collect(child, paragraph));
+  };
+  root.childNodes.forEach((node) => {
+    const isBlock = node instanceof HTMLElement && ["P", "DIV"].includes(node.tagName);
+    if (!isBlock) {
+      if (loose === null) {
+        loose = { text: "", links: [] };
+        paragraphs.push(loose);
+      }
+      collect(node, loose);
+      return;
+    }
+    loose = null;
+    const nodeId = node.getAttribute("data-node-id");
+    const paragraph: EditorParagraph = { ...(nodeId === null ? {} : { nodeId }), text: "", links: [] };
+    node.childNodes.forEach((child) => collect(child, paragraph));
+    paragraphs.push(paragraph);
+  });
+  return paragraphs.filter((paragraph) => paragraph.text.trim().length > 0 || paragraph.links.length > 0);
 }
 
 function ParaphraseDialog({ selection, sourceTitle, sections, defaultSectionId, hasApiKey, onOpenSettings, onClose, onInsert }: {

@@ -9,9 +9,17 @@ import { pdfAssetOptions } from "./pdf-options";
 
 export type SelectionAction = "paraphrase" | "quote";
 
+export interface PdfHighlight {
+  id: string;
+  pageNumber: number;
+  text: string;
+  kind: "quote" | "paraphrase";
+}
+
 interface PdfReaderProps {
   url: string;
   jumpToPage: { page: number; token: number } | null;
+  highlights: PdfHighlight[];
   onSelection: (action: SelectionAction, text: string, pageNumber: number) => void;
 }
 
@@ -25,7 +33,7 @@ interface MenuState {
 
 // Renders a PDF with selectable text. Right-clicking a selection offers to paraphrase or quote it,
 // and reports the page the selection starts on so the citation can point back to it.
-export function PdfReader({ url, jumpToPage, onSelection }: PdfReaderProps) {
+export function PdfReader({ url, jumpToPage, highlights, onSelection }: PdfReaderProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [aspectRatio, setAspectRatio] = useState(1.414);
@@ -131,7 +139,7 @@ export function PdfReader({ url, jumpToPage, onSelection }: PdfReaderProps) {
       {error === null ? null : <p className="error" role="alert">{error}</p>}
       {pdf === null && error === null ? <p className="pdf-loading">PDF yükleniyor…</p> : null}
       {pdf === null || width === 0 ? null : Array.from({ length: pdf.numPages }, (_, index) => (
-        <PdfPage key={`${url}-${index + 1}`} pdf={pdf} pageNumber={index + 1} width={width} placeholderHeight={width * aspectRatio} />
+        <PdfPage key={`${url}-${index + 1}`} pdf={pdf} pageNumber={index + 1} width={width} placeholderHeight={width * aspectRatio} highlights={highlights.filter((highlight) => highlight.pageNumber === index + 1)} />
       ))}
       {menu === null ? null : (
         <div className="context-menu" role="menu" style={{ left: menu.x, top: menu.y }} onClick={(event) => event.stopPropagation()}>
@@ -144,7 +152,7 @@ export function PdfReader({ url, jumpToPage, onSelection }: PdfReaderProps) {
   );
 }
 
-function PdfPage({ pdf, pageNumber, width, placeholderHeight }: { pdf: PDFDocumentProxy; pageNumber: number; width: number; placeholderHeight: number }) {
+function PdfPage({ pdf, pageNumber, width, placeholderHeight, highlights }: { pdf: PDFDocumentProxy; pageNumber: number; width: number; placeholderHeight: number; highlights: PdfHighlight[] }) {
   const pageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
@@ -152,6 +160,9 @@ function PdfPage({ pdf, pageNumber, width, placeholderHeight }: { pdf: PDFDocume
   const [renderedHeight, setRenderedHeight] = useState<number | null>(null);
   const height = renderedHeight ?? placeholderHeight;
   const [scale, setScale] = useState(1);
+  const [textLayerVersion, setTextLayerVersion] = useState(0);
+  const [marks, setMarks] = useState<HighlightRect[]>([]);
+  const highlightKey = highlights.map((highlight) => `${highlight.id}:${highlight.kind}:${highlight.text}`).join("|");
 
   useEffect(() => {
     const element = pageRef.current;
@@ -197,6 +208,7 @@ function PdfPage({ pdf, pageNumber, width, placeholderHeight }: { pdf: PDFDocume
         textLayer.cancel();
       };
       await Promise.allSettled([renderTask.promise, textLayer.render()]);
+      if (!cancelled) setTextLayerVersion((version) => version + 1);
     })();
     return () => {
       cancelled = true;
@@ -204,9 +216,21 @@ function PdfPage({ pdf, pageNumber, width, placeholderHeight }: { pdf: PDFDocume
     };
   }, [visible, pdf, pageNumber, width]);
 
+  // Quoted passages are found again in the page's text layer and painted underneath it.
+  useEffect(() => {
+    const page = pageRef.current;
+    const textContainer = textRef.current;
+    if (textLayerVersion === 0 || page === null || textContainer === null) return;
+    setMarks(highlights.flatMap((highlight) => locateText(textContainer, highlight.text, page).map((rect) => ({ ...rect, id: highlight.id, kind: highlight.kind }))));
+    // highlightKey stands for the highlights' content, so a new array with the same quotes is no change.
+  }, [textLayerVersion, highlightKey]);
+
   return (
     <div className="pdf-page" data-page={pageNumber} ref={pageRef} style={{ width, height, "--total-scale-factor": scale } as React.CSSProperties}>
       <canvas ref={canvasRef} />
+      <div className="highlight-layer" aria-hidden="true">
+        {marks.map((mark, index) => <div key={`${mark.id}-${index}`} className={`pdf-highlight ${mark.kind}`} style={{ left: mark.left, top: mark.top, width: mark.width, height: mark.height }} />)}
+      </div>
       <div className="textLayer" ref={textRef} />
       <span className="pdf-page-number">{pageNumber}</span>
     </div>
@@ -237,6 +261,52 @@ async function readOutline(pdf: PDFDocumentProxy): Promise<OutlineEntry[]> {
   };
   await visit(((await pdf.getOutline()) ?? []) as OutlineNode[], 0);
   return entries;
+}
+
+interface HighlightRect {
+  id: string;
+  kind: PdfHighlight["kind"];
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+// Matches the quote against the page's text ignoring whitespace and hyphens (selections drop the
+// hyphen of a word broken across lines), then measures the matching characters.
+function locateText(textContainer: HTMLElement, quote: string, page: HTMLElement): Array<Omit<HighlightRect, "id" | "kind">> {
+  const ignored = /[\s\-\u00ad]/u;
+  const target = [...quote].filter((character) => !ignored.test(character)).join("").toLocaleLowerCase("tr");
+  if (target.length === 0) return [];
+  const characters: Array<{ node: Text; offset: number }> = [];
+  let pageText = "";
+  const walker = document.createTreeWalker(textContainer, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const text = node.textContent ?? "";
+    for (let offset = 0; offset < text.length; offset += 1) {
+      const character = text[offset] ?? "";
+      if (ignored.test(character)) continue;
+      characters.push({ node: node as Text, offset });
+      pageText += character.toLocaleLowerCase("tr");
+    }
+  }
+  // A quote running onto the next page is highlighted as far as this page goes.
+  let length = target.length;
+  let start = pageText.indexOf(target);
+  while (start < 0 && length > 40) {
+    length = Math.floor(length * 0.8);
+    start = pageText.indexOf(target.slice(0, length));
+  }
+  const first = characters[start];
+  const last = characters[start + length - 1];
+  if (start < 0 || first === undefined || last === undefined) return [];
+  const range = document.createRange();
+  range.setStart(first.node, first.offset);
+  range.setEnd(last.node, last.offset + 1);
+  const origin = page.getBoundingClientRect();
+  return [...range.getClientRects()]
+    .filter((rect) => rect.width > 0.5 && rect.height > 0.5)
+    .map((rect) => ({ left: rect.left - origin.left, top: rect.top - origin.top, width: rect.width, height: rect.height }));
 }
 
 function normalizeSelection(text: string): string {

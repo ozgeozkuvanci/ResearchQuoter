@@ -41,7 +41,7 @@ export async function readPdfDetails(file: File): Promise<PdfDetails> {
     const metadataAuthor = junkAuthor.test(author) ? "" : author;
     const doi = allText.match(doiPattern)?.[0].replace(/[.,;)\]]+$/, "") ?? "";
     const details: PdfDetails = {
-      title: !junkTitle.test(metadataTitle) && metadataTitle.length > 3 ? metadataTitle : largestText(pages[0] ?? []),
+      title: isUsableTitle(metadataTitle) ? metadataTitle : largestText(pages[0] ?? []),
       authors: formatAuthorList(metadataAuthor),
       year: likelyYear(firstPageText),
       doi
@@ -50,6 +50,13 @@ export async function readPdfDetails(file: File): Promise<PdfDetails> {
   } finally {
     void task.destroy();
   }
+}
+
+// Publishers often put a file name or an article identifier ("PII: 0142-694X(95)00005-C") there.
+function isUsableTitle(title: string): boolean {
+  if (title.length <= 3 || junkTitle.test(title) || /^(pii|doi|issn|isbn)\s*:/i.test(title)) return false;
+  const looksLikeCode = !/\p{Ll}/u.test(title) && (title.match(/\d/g)?.length ?? 0) >= 4;
+  return !looksLikeCode;
 }
 
 // Titles are usually set in the biggest type on the first page.

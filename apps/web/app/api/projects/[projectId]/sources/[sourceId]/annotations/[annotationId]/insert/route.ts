@@ -43,13 +43,14 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       const insertedText = paraphrase === undefined ? `“${selectedText}” ${citationWithPage}` : `${paraphrase} ${citationWithPage}`;
       const insertedTextHash = sha256(insertedText);
       const nodeId = randomUUID();
+      const provenanceId = randomUUID();
       const result = await database.prisma.$transaction(async (transaction) => {
         const project = await transaction.academicProject.findFirst({
           where: { id: projectId, workspaceId: developmentContext.workspaceId, deletedAt: null },
           select: { mainDocument: { select: { id: true, content: true } } }
         });
         if (project?.mainDocument === null || project === null) throw new Error("Main document not found.");
-        const content = appendToSection(project.mainDocument.content, sectionId, nodeId, insertedText);
+        const content = appendToSection(project.mainDocument.content, sectionId, nodeId, insertedText, provenanceId);
         const block = await transaction.documentBlock.create({
           data: { academicProjectId: projectId, mainDocumentId: project.mainDocument.id, nodeId, blockType: "paragraph", contentHash: insertedTextHash }
         });
@@ -62,6 +63,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         });
         const provenance = await transaction.provenanceLink.create({
           data: {
+            id: provenanceId,
             academicProjectId: projectId,
             mainDocumentId: project.mainDocument.id,
             targetDocumentBlockId: block.id,
