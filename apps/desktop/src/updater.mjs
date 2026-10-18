@@ -23,7 +23,8 @@ function readUpdateToken(settingsFile) {
 // New versions are published as GitHub releases. They download in the background; once one is
 // ready the person can restart now, or it installs when they next quit.
 // The latest outcome is written to updateStatusFile, which Ayarlar shows.
-export function startAutomaticUpdates(getWindow, settingsFile, updateStatusFile) {
+// beforeInstall stops whatever holds the installed files open.
+export function startAutomaticUpdates(getWindow, settingsFile, updateStatusFile, beforeInstall) {
   if (!app.isPackaged) return;
   const logRoot = path.join(app.getPath("userData"), "logs");
   const log = (message) => {
@@ -69,7 +70,10 @@ export function startAutomaticUpdates(getWindow, settingsFile, updateStatusFile)
       detail: "Yeniden başlattığınızda yeni sürüm kurulur. \"Sonra\" derseniz program kapanırken kurulur. Projeleriniz ve PDF'leriniz olduğu gibi kalır."
     };
     const { response } = window === undefined ? await dialog.showMessageBox(options) : await dialog.showMessageBox(window, options);
-    if (response === 0) autoUpdater.quitAndInstall(true, true);
+    if (response !== 0) return;
+    log("Stopping services before installing the update");
+    await beforeInstall();
+    autoUpdater.quitAndInstall(true, true);
   });
 
   const check = () => {

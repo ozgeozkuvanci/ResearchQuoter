@@ -319,7 +319,8 @@ app.whenReady().then(async () => {
     startAutomaticUpdates(
       () => mainWindow,
       path.join(app.getPath("userData"), "settings.json"),
-      path.join(app.getPath("userData"), "update-status.json")
+      path.join(app.getPath("userData"), "update-status.json"),
+      stopServicesForUpdate
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -335,10 +336,7 @@ app.on("window-all-closed", () => {
   app.quit();
 });
 
-app.on("before-quit", () => {
-  if (nextServer !== undefined && nextServer.exitCode === null) {
-    nextServer.kill();
-  }
+function stopManagedDatabase() {
   if (managedDatabaseStarted && managedDatabaseControl !== undefined && managedDatabaseRoot !== undefined) {
     runDatabaseCommand(
       managedDatabaseControl,
@@ -348,4 +346,23 @@ app.on("before-quit", () => {
     );
     managedDatabaseStarted = false;
   }
+}
+
+// The update installer starts before the app quits and replaces files that the local server and
+// PostgreSQL keep open, so both have to be fully stopped before it runs.
+async function stopServicesForUpdate() {
+  mainWindow?.hide();
+  if (nextServer !== undefined && nextServer.exitCode === null) {
+    const exited = new Promise((resolve) => nextServer.once("exit", resolve));
+    nextServer.kill();
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  }
+  stopManagedDatabase();
+}
+
+app.on("before-quit", () => {
+  if (nextServer !== undefined && nextServer.exitCode === null) {
+    nextServer.kill();
+  }
+  stopManagedDatabase();
 });
