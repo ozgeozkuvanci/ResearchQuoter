@@ -564,6 +564,16 @@ blockquote {
   padding-top: 0.8rem;
 }
 
+.settings-section {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.settings-section + .settings-section {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
 .dialog-footer label {
   font-weight: 400;
 }

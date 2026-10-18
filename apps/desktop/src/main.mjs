@@ -233,7 +233,8 @@ async function startPackagedServer() {
       NODE_ENV: "production",
       PORT: String(port),
       RESEARCH_DESKTOP: "1",
-      RESEARCH_SETTINGS_FILE: path.join(userDataRoot, "settings.json")
+      RESEARCH_SETTINGS_FILE: path.join(userDataRoot, "settings.json"),
+      RESEARCH_UPDATE_STATUS_FILE: path.join(userDataRoot, "update-status.json")
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
@@ -315,7 +316,11 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   try {
     await createMainWindow();
-    startAutomaticUpdates(() => mainWindow);
+    startAutomaticUpdates(
+      () => mainWindow,
+      path.join(app.getPath("userData"), "settings.json"),
+      path.join(app.getPath("userData"), "update-status.json")
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const logRoot = path.join(app.getPath("userData"), "logs");

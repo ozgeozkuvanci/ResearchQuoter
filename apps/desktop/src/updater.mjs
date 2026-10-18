@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, watchFile, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { app, dialog } from "electron";
@@ -6,10 +6,24 @@ import updater from "electron-updater";
 
 const { autoUpdater } = updater;
 const checkEveryMs = 6 * 60 * 60 * 1000;
+// Same repository as "publish" in package.json.
+const releases = { provider: "github", owner: "ozgeozkuvanci", repo: "researchquoter-releases" };
 
-// New versions are published as GitHub releases (see "publish" in package.json). They download in
-// the background; once one is ready the person can restart now, or it installs when they next quit.
-export function startAutomaticUpdates(getWindow) {
+// The releases repository can be private: then the read-only GitHub token saved in Ayarlar
+// (settings.json, written by the web app) is needed to see and download releases.
+function readUpdateToken(settingsFile) {
+  try {
+    const token = JSON.parse(readFileSync(settingsFile, "utf8")).githubUpdateToken;
+    return typeof token === "string" && token.length > 0 ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// New versions are published as GitHub releases. They download in the background; once one is
+// ready the person can restart now, or it installs when they next quit.
+// The latest outcome is written to updateStatusFile, which Ayarlar shows.
+export function startAutomaticUpdates(getWindow, settingsFile, updateStatusFile) {
   if (!app.isPackaged) return;
   const logRoot = path.join(app.getPath("userData"), "logs");
   const log = (message) => {
@@ -21,12 +35,27 @@ export function startAutomaticUpdates(getWindow) {
     }
   };
 
+  const report = (message) => {
+    try {
+      writeFileSync(updateStatusFile, JSON.stringify({ message, at: new Date().toISOString() }), "utf8");
+    } catch {
+      // The status is informational only.
+    }
+  };
+
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = { info: log, warn: log, error: log, debug: () => undefined };
 
+  autoUpdater.on("update-not-available", () => report(`Program güncel (sürüm ${app.getVersion()}).`));
+  autoUpdater.on("update-available", (info) => report(`Yeni sürüm ${info.version} indiriliyor.`));
+  autoUpdater.on("error", () => report(readUpdateToken(settingsFile) === undefined
+    ? "Güncellemeler kontrol edilemedi. Güncelleme deposu gizliyse erişim anahtarını girin."
+    : "Güncellemeler kontrol edilemedi. İnternet bağlantısını ve erişim anahtarını kontrol edin."));
+
   let asked = false;
   autoUpdater.on("update-downloaded", async (info) => {
+    report(`Sürüm ${info.version} indirildi; program yeniden başlayınca kurulacak.`);
     if (asked) return;
     asked = true;
     const window = getWindow();
@@ -44,8 +73,17 @@ export function startAutomaticUpdates(getWindow) {
   });
 
   const check = () => {
+    const token = readUpdateToken(settingsFile);
+    autoUpdater.setFeedURL(token === undefined ? releases : { ...releases, private: true, token });
     autoUpdater.checkForUpdates().catch((error) => log(`Update check failed: ${error instanceof Error ? error.message : String(error)}`));
   };
   check();
   setInterval(check, checkEveryMs).unref();
+  // Check again right after a token is saved, instead of waiting for the next round.
+  let lastToken = readUpdateToken(settingsFile);
+  watchFile(settingsFile, { interval: 5000 }, () => {
+    const token = readUpdateToken(settingsFile);
+    if (token !== lastToken && token !== undefined) check();
+    lastToken = token;
+  });
 }

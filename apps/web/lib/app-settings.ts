@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 // application-data folder; development falls back to a git-ignored file next to the local assets.
 export interface AppSettings {
   anthropicApiKey?: string;
+  // Read by the desktop shell to download updates from the private releases repository.
+  githubUpdateToken?: string;
 }
 
 function settingsPath(): string {

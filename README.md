@@ -17,8 +17,9 @@ The `Desktop installer` GitHub Actions workflow builds the same installer on Win
 
 ### Updates
 
-Installed copies check the public `ozgeozkuvanci/researchquoter-releases` repository for new GitHub
-releases, download them in the background and offer to restart. To publish one, raise `version` in
+Installed copies check the `ozgeozkuvanci/researchquoter-releases` repository for new GitHub releases,
+download them in the background and offer to restart. While that repository is private, each computer
+needs a fine-grained GitHub token with read-only Contents access to it, saved once in Ayarlar. To publish one, raise `version` in
 `apps/desktop/package.json`, run `pnpm desktop:dist`, and push `latest.yml`, the `.blockmap` and the installer
 split into parts under 100 MB (`split -b 75M -d -a 2 <exe> <exe>.part`) to `release/` on a `staging/v<version>`
 branch of that repository, with release notes in `NOTES.md`. Its workflow joins the parts, publishes the

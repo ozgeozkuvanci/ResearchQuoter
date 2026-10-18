@@ -609,37 +609,87 @@ function ParaphraseDialog({ selection, sourceTitle, sections, defaultSectionId, 
   );
 }
 
+interface UpdateSettings {
+  isDesktop: boolean;
+  hasUpdateToken: boolean;
+  updateStatus: { message: string; at: string } | null;
+}
+
 function SettingsDialog({ hasApiKey, onClose, onSaved }: { hasApiKey: boolean; onClose: () => void; onSaved: (hasApiKey: boolean) => void }) {
   const [apiKey, setApiKey] = useState("");
+  const [updateToken, setUpdateToken] = useState("");
+  const [updates, setUpdates] = useState<UpdateSettings>({ isDesktop: false, hasUpdateToken: false, updateStatus: null });
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function save(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const response = await fetch("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ apiKey }) });
+  // Polled while open so a check started by saving the token shows its outcome here.
+  useEffect(() => {
+    const load = () => void fetch("/api/settings").then(async (response) => response.ok ? response.json() : null).then((payload: Partial<UpdateSettings> | null) => {
+      if (payload !== null) setUpdates({ isDesktop: payload.isDesktop === true, hasUpdateToken: payload.hasUpdateToken === true, updateStatus: payload.updateStatus ?? null });
+    });
+    load();
+    const timer = setInterval(load, 4000);
+    return () => clearInterval(timer);
+  }, []);
+
+  async function put(body: Record<string, string>): Promise<Record<string, unknown> | null> {
+    const response = await fetch("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const payload: unknown = await response.json();
     if (!response.ok || typeof payload !== "object" || payload === null || !("hasApiKey" in payload)) {
       setError(getErrorMessage(payload));
-      return;
+      return null;
     }
-    onSaved(payload.hasApiKey === true);
+    return payload as Record<string, unknown>;
+  }
+
+  async function saveApiKey(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const payload = await put({ apiKey });
+    if (payload !== null) onSaved(payload.hasApiKey === true);
+  }
+
+  async function saveUpdateToken(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const payload = await put({ updateToken });
+    if (payload === null) return;
+    setUpdates((current) => ({ ...current, hasUpdateToken: payload.hasUpdateToken === true }));
+    setUpdateToken("");
+    setUpdateMessage(payload.hasUpdateToken === true ? "Kaydedildi. Program güncellemeleri bu anahtarla kontrol edecek." : "Anahtar silindi.");
   }
 
   return (
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <form className="dialog" role="dialog" aria-modal="true" aria-labelledby="settings-heading" onSubmit={save}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
         <div className="dialog-header">
           <h2 id="settings-heading">Ayarlar</h2>
           <button className="delete-button" type="button" title="Kapat" onClick={onClose}>×</button>
         </div>
-        <p>Paraphrase önerileri Claude yapay zekâsıyla hazırlanır. Bunun için bir Anthropic API anahtarı gerekir (console.anthropic.com adresinden alınır). Anahtar yalnızca bu bilgisayarda saklanır; öneri isterken seçtiğiniz metin Anthropic'e gönderilir.</p>
-        <p className="muted">{hasApiKey ? "Bir anahtar kayıtlı. Değiştirmek için yenisini girin, silmek için boş bırakıp kaydedin." : "Henüz anahtar girilmedi."}</p>
-        <label htmlFor="api-key">Anthropic API anahtarı</label>
-        <input id="api-key" type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-ant-..." />
+        <form className="settings-section" onSubmit={saveApiKey}>
+          <h3>Paraphrase önerileri</h3>
+          <p>Paraphrase önerileri Claude yapay zekâsıyla hazırlanır. Bunun için bir Anthropic API anahtarı gerekir (console.anthropic.com adresinden alınır). Anahtar yalnızca bu bilgisayarda saklanır; öneri isterken seçtiğiniz metin Anthropic'e gönderilir.</p>
+          <p className="muted">{hasApiKey ? "Bir anahtar kayıtlı. Değiştirmek için yenisini girin, silmek için boş bırakıp kaydedin." : "Henüz anahtar girilmedi."}</p>
+          <label htmlFor="api-key">Anthropic API anahtarı</label>
+          <input id="api-key" type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-ant-..." />
+          <div className="dialog-footer">
+            <button type="submit">Kaydet</button>
+          </div>
+        </form>
+        {updates.isDesktop ? (
+          <form className="settings-section" onSubmit={saveUpdateToken}>
+            <h3>Otomatik güncelleme</h3>
+            <p>Güncellemeler gizli GitHub deposundan indirilir. Bunun için GitHub'da oluşturduğunuz, yalnızca okuma izni olan erişim anahtarını buraya bir kez girin. Anahtar yalnızca bu bilgisayarda saklanır.</p>
+            <p className="muted">{updates.hasUpdateToken ? "Bir anahtar kayıtlı. Değiştirmek için yenisini girin, silmek için boş bırakıp kaydedin." : "Henüz anahtar girilmedi."}</p>
+            <label htmlFor="update-token">GitHub erişim anahtarı</label>
+            <input id="update-token" type="password" autoComplete="off" value={updateToken} onChange={(event) => setUpdateToken(event.target.value)} placeholder="github_pat_..." />
+            {updateMessage === null ? null : <p className="success" role="status">{updateMessage}</p>}
+            {updates.updateStatus === null ? null : <p className="muted">Son kontrol ({new Date(updates.updateStatus.at).toLocaleString("tr-TR")}): {updates.updateStatus.message}</p>}
+            <div className="dialog-footer">
+              <button type="submit">Kaydet</button>
+            </div>
+          </form>
+        ) : null}
         {error === null ? null : <p className="error" role="alert">{error}</p>}
-        <div className="dialog-footer">
-          <button type="submit">Kaydet</button>
-        </div>
-      </form>
+      </div>
     </div>
   );
 }
