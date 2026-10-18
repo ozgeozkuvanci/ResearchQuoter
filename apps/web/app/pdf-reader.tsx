@@ -5,6 +5,8 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useEffect, useRef, useState } from "react";
 
+import { pdfAssetOptions } from "./pdf-options";
+
 export type SelectionAction = "paraphrase" | "quote";
 
 interface PdfReaderProps {
@@ -42,7 +44,7 @@ export function PdfReader({ url, jumpToPage, onSelection }: PdfReaderProps) {
       try {
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-        const task = pdfjs.getDocument({ url });
+        const task = pdfjs.getDocument({ url, ...pdfAssetOptions });
         loadingTask = task;
         const loaded = await task.promise;
         const firstPage = await loaded.getPage(1);
@@ -170,7 +172,9 @@ function PdfPage({ pdf, pageNumber, width, placeholderHeight }: { pdf: PDFDocume
     let cleanup = (): void => undefined;
     void (async () => {
       const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-      const page = await pdf.getPage(pageNumber);
+      // The document is destroyed when another PDF opens; a page still loading then just stops.
+      const page = await pdf.getPage(pageNumber).catch(() => null);
+      if (page === null) return;
       const baseViewport = page.getViewport({ scale: 1 });
       const viewport = page.getViewport({ scale: width / baseViewport.width });
       const canvas = canvasRef.current;

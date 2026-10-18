@@ -2,6 +2,8 @@
 // text on the first page as a title guess, and a DOI. When a DOI is found, Crossref fills in the
 // published title, authors and year. Every value is a suggestion the user can still edit.
 
+import { pdfAssetOptions } from "./pdf-options";
+
 export interface PdfDetails {
   title: string;
   authors: string;
@@ -21,7 +23,7 @@ const junkAuthor = /^(anonymous|unknown|admin(istrator)?|user|owner|author|\s*)$
 export async function readPdfDetails(file: File): Promise<PdfDetails> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-  const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+  const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), ...pdfAssetOptions });
   try {
     const pdf = await task.promise;
     const { info } = await pdf.getMetadata().catch(() => ({ info: {} }));
