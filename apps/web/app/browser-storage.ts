@@ -13,3 +13,11 @@ export function writeStorage(key: string, value: string): void {
     // Remembering the last choice is a convenience only.
   }
 }
+
+export function removeStorage(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Nothing was stored.
+  }
+}

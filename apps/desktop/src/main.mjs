@@ -1,11 +1,11 @@
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, createWriteStream } from "node:fs";
+import { appendFileSync, createWriteStream, readFileSync, watchFile, writeFileSync } from "node:fs";
 import { access, appendFile, cp, mkdir, readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import path from "node:path";
 
-import { app, BrowserWindow, dialog, nativeTheme, session, shell } from "electron";
+import { app, BrowserWindow, dialog, nativeTheme, screen, session, shell } from "electron";
 
 import { startAutomaticUpdates } from "./updater.mjs";
 
@@ -28,12 +28,20 @@ if (!hasSingleInstanceLock) {
   app.quit();
 }
 
-function getFreePort() {
+// The page's saved state (open project, PDF page, zoom) is kept per address, so the app asks for the
+// same port every time and only takes another one when something else is already using it.
+const preferredApplicationPort = 41837;
+
+async function getApplicationPort() {
+  return getFreePort(preferredApplicationPort).catch(() => getFreePort(0));
+}
+
+function getFreePort(port) {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.unref();
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(port, "127.0.0.1", () => {
       const address = server.address();
       const port = typeof address === "object" && address !== null ? address.port : undefined;
       server.close(() => {
@@ -210,7 +218,7 @@ async function ensureManagedDatabase(userDataRoot, logRoot) {
 }
 
 async function startPackagedServer() {
-  const port = await getFreePort();
+  const port = await getApplicationPort();
   const serverRoot = path.join(process.resourcesPath, "web");
   const serverScript = path.join(serverRoot, "apps", "web", "server.js");
   const userDataRoot = app.getPath("userData");
@@ -256,7 +264,47 @@ function isApplicationUrl(url) {
   }
 }
 
-function secureWindowOptions() {
+function windowStateFile() {
+  return path.join(app.getPath("userData"), "window-state.json");
+}
+
+// The window opens where and how big it was last time.
+function readWindowState() {
+  try {
+    const state = JSON.parse(readFileSync(windowStateFile(), "utf8"));
+    const saved = ["x", "y", "width", "height"].every((key) => Number.isInteger(state[key])) ? { x: state.x, y: state.y, width: Math.max(1000, state.width), height: Math.max(700, state.height) } : undefined;
+    // A window last seen on a screen that is no longer connected opens at the default place instead.
+    const visible = saved !== undefined && screen.getAllDisplays().some(({ workArea }) => saved.x < workArea.x + workArea.width - 100 && saved.x + saved.width > workArea.x + 100 && saved.y >= workArea.y - 10 && saved.y < workArea.y + workArea.height - 100);
+    return { bounds: visible ? saved : {}, maximized: state.maximized === true };
+  } catch {
+    return { bounds: {}, maximized: false };
+  }
+}
+
+function rememberWindowState(window) {
+  const save = () => {
+    try {
+      writeFileSync(windowStateFile(), JSON.stringify({ ...window.getNormalBounds(), maximized: window.isMaximized() }));
+    } catch {
+      // Only the window position is lost.
+    }
+  };
+  window.on("close", save);
+}
+
+// Starting with Windows is on unless switched off in Ayarlar (settings.json openAtLogin: false).
+function applyOpenAtLogin(settingsFile) {
+  if (!app.isPackaged || process.platform !== "win32") return;
+  let openAtLogin = true;
+  try {
+    openAtLogin = JSON.parse(readFileSync(settingsFile, "utf8")).openAtLogin !== false;
+  } catch {
+    // No settings yet: keep the default.
+  }
+  app.setLoginItemSettings({ openAtLogin });
+}
+
+function secureWindowOptions(bounds = {}) {
   return {
     backgroundColor: "#ffffff",
     height: 900,
@@ -265,6 +313,7 @@ function secureWindowOptions() {
     show: true,
     title: "Research Workspace",
     width: 1440,
+    ...bounds,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -280,7 +329,10 @@ async function createMainWindow() {
     : process.env.RESEARCH_DESKTOP_URL ?? "http://127.0.0.1:3210";
   applicationOrigin = new URL(startUrl).origin;
 
-  mainWindow = new BrowserWindow(secureWindowOptions());
+  const windowState = readWindowState();
+  mainWindow = new BrowserWindow(secureWindowOptions(windowState.bounds));
+  if (windowState.maximized) mainWindow.maximize();
+  rememberWindowState(mainWindow);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isApplicationUrl(url)) {
@@ -316,6 +368,9 @@ app.whenReady().then(async () => {
   nativeTheme.themeSource = "light";
   app.setAppUserModelId("com.researchworkspace.desktop");
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  const settingsFile = path.join(app.getPath("userData"), "settings.json");
+  applyOpenAtLogin(settingsFile);
+  watchFile(settingsFile, { interval: 5000 }, () => applyOpenAtLogin(settingsFile));
   try {
     await createMainWindow();
     startAutomaticUpdates(

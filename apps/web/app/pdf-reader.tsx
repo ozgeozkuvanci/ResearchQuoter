@@ -5,6 +5,7 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useEffect, useRef, useState } from "react";
 
+import { readStorage, writeStorage } from "./browser-storage";
 import { pdfAssetOptions } from "./pdf-options";
 
 export type SelectionAction = "paraphrase" | "quote" | "note";
@@ -36,6 +37,8 @@ interface PdfReaderProps {
   hideOutline?: boolean;
   onDocumentInfo?: (info: { numPages: number; outline: PdfOutlineEntry[] }) => void;
   onPageChange?: (pageNumber: number) => void;
+  // When given, the page being read is remembered under this key and the PDF reopens there.
+  resumeKey?: string;
 }
 
 const actionLabels: Record<SelectionAction, string> = { paraphrase: "Paraphrase", quote: "Alıntı olarak ekle", note: "Not ekle" };
@@ -50,7 +53,7 @@ interface MenuState {
 
 // Renders a PDF with selectable text. Right-clicking a selection offers to paraphrase or quote it,
 // and reports the page the selection starts on so the citation can point back to it.
-export function PdfReader({ url, jumpToPage, highlights, onSelection, actions = ["paraphrase", "quote"], maxPageWidth, zoom = 1, hideOutline = false, onDocumentInfo, onPageChange }: PdfReaderProps) {
+export function PdfReader({ url, jumpToPage, highlights, onSelection, actions = ["paraphrase", "quote"], maxPageWidth, zoom = 1, hideOutline = false, onDocumentInfo, onPageChange, resumeKey }: PdfReaderProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [aspectRatio, setAspectRatio] = useState(1.414);
@@ -80,9 +83,11 @@ export function PdfReader({ url, jumpToPage, highlights, onSelection, actions = 
         const viewport = firstPage.getViewport({ scale: 1 });
         if (cancelled) return;
         setAspectRatio(viewport.height / viewport.width);
+        const remembered = resumeKey === undefined ? 1 : Number(readStorage(pageStorageKey(resumeKey)));
+        const startPage = Number.isInteger(remembered) && remembered >= 1 && remembered <= loaded.numPages ? remembered : 1;
+        currentPageRef.current = startPage;
         setPdf(loaded);
-        currentPageRef.current = 1;
-        callbacksRef.current.onPageChange?.(1);
+        callbacksRef.current.onPageChange?.(startPage);
         callbacksRef.current.onDocumentInfo?.({ numPages: loaded.numPages, outline: [] });
         const entries = await readOutline(loaded).catch(() => []);
         if (cancelled) return;
@@ -96,6 +101,7 @@ export function PdfReader({ url, jumpToPage, highlights, onSelection, actions = 
       cancelled = true;
       void loadingTask?.destroy();
     };
+    // resumeKey goes with the url: the same PDF always uses the same key.
   }, [url]);
 
   useEffect(() => {
@@ -120,11 +126,12 @@ export function PdfReader({ url, jumpToPage, highlights, onSelection, actions = 
     containerRef.current?.querySelector(`[data-page="${jumpToPage.page}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [jumpToPage, pdf]);
 
-  // Zooming changes every page's height, so the page being read is brought back into view.
+  // Opening a PDF continues at the remembered page, and zooming changes every page's height, so in
+  // both cases the page being read is brought back into view.
   useEffect(() => {
-    if (width === 0) return;
+    if (width === 0 || pdf === null) return;
     containerRef.current?.querySelector(`[data-page="${currentPageRef.current}"]`)?.scrollIntoView({ block: "start" });
-  }, [width]);
+  }, [width, pdf]);
 
   function handleScroll(): void {
     const container = containerRef.current;
@@ -139,6 +146,7 @@ export function PdfReader({ url, jumpToPage, highlights, onSelection, actions = 
     if (page !== currentPageRef.current) {
       currentPageRef.current = page;
       onPageChange?.(page);
+      if (resumeKey !== undefined) writeStorage(pageStorageKey(resumeKey), String(page));
     }
   }
 
@@ -348,6 +356,10 @@ function locateText(textContainer: HTMLElement, quote: string, page: HTMLElement
   return [...range.getClientRects()]
     .filter((rect) => rect.width > 0.5 && rect.height > 0.5)
     .map((rect) => ({ left: rect.left - origin.left, top: rect.top - origin.top, width: rect.width, height: rect.height }));
+}
+
+function pageStorageKey(resumeKey: string): string {
+  return `research-workspace.page.${resumeKey}`;
 }
 
 function normalizeSelection(text: string): string {

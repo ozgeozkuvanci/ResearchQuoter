@@ -1057,3 +1057,17 @@ blockquote {
   background: rgb(52 168 83 / 7%);
   border-left-color: rgb(52 168 83 / 60%);
 }
+
+.checkbox-row {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.checkbox-row input {
+  accent-color: var(--accent);
+  height: 1rem;
+  margin: 0;
+  width: 1rem;
+}

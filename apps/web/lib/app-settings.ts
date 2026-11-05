@@ -7,6 +7,8 @@ export interface AppSettings {
   anthropicApiKey?: string;
   // Read by the desktop shell to download updates from the private releases repository.
   githubUpdateToken?: string;
+  // Read by the desktop shell: whether it starts when Windows starts. Missing means yes.
+  openAtLogin?: boolean;
 }
 
 function settingsPath(): string {

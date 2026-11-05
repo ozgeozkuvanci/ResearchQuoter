@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { readStorage, writeStorage } from "./browser-storage";
+import { readStorage, removeStorage, writeStorage } from "./browser-storage";
 import { type PdfHighlight, type PdfOutlineEntry, PdfReader, type SelectionAction } from "./pdf-reader";
 
 export interface ReadingNote {
@@ -35,6 +35,8 @@ interface ReadingViewProps {
 }
 
 const zoomKey = "research-workspace.reading-zoom";
+// An unfinished note is kept per PDF, so it is still there after closing the app.
+const draftKey = (sourceId: string) => `research-workspace.note-draft.${sourceId}`;
 const notesOpenKey = "research-workspace.reading-notes-open";
 const zoomSteps = [0.6, 0.75, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2];
 
@@ -60,10 +62,18 @@ export function ReadingView({ projectId, sources, sourceId, quoteHighlights, onS
   }, []);
 
   useEffect(() => {
-    setDraftPassage(null);
     setEditing(null);
     setInfo({ numPages: 0, outline: [] });
+    const stored = source === undefined ? null : readDraft(source.id);
+    setDraft(stored?.text ?? "");
+    setDraftPassage(stored?.passage ?? null);
   }, [source?.id]);
+
+  useEffect(() => {
+    if (source === undefined) return;
+    if (draft.trim().length === 0 && draftPassage === null) removeStorage(draftKey(source.id));
+    else writeStorage(draftKey(source.id), JSON.stringify({ text: draft, passage: draftPassage }));
+  }, [draft, draftPassage, source?.id]);
 
   if (source === undefined) {
     return (
@@ -186,6 +196,7 @@ export function ReadingView({ projectId, sources, sourceId, quoteHighlights, onS
           onSelection={handleSelection}
           onDocumentInfo={setInfo}
           onPageChange={setCurrentPage}
+          resumeKey={source.id}
         />
       </section>
 
@@ -247,4 +258,16 @@ export function ReadingView({ projectId, sources, sourceId, quoteHighlights, onS
       ) : null}
     </div>
   );
+}
+
+function readDraft(sourceId: string): { text: string; passage: { text: string; pageNumber: number } | null } | null {
+  try {
+    const parsed: unknown = JSON.parse(readStorage(draftKey(sourceId)) ?? "null");
+    if (typeof parsed !== "object" || parsed === null || !("text" in parsed) || typeof parsed.text !== "string") return null;
+    const passage = "passage" in parsed ? parsed.passage : null;
+    const validPassage = typeof passage === "object" && passage !== null && "text" in passage && "pageNumber" in passage && typeof passage.text === "string" && typeof passage.pageNumber === "number" ? { text: passage.text, pageNumber: passage.pageNumber } : null;
+    return { text: parsed.text, passage: validPassage };
+  } catch {
+    return null;
+  }
 }

@@ -11,6 +11,7 @@ async function settingsStatus(settings: AppSettings) {
     hasApiKey: (await getAnthropicApiKey()) !== undefined,
     hasUpdateToken: settings.githubUpdateToken !== undefined,
     isDesktop: process.env.RESEARCH_DESKTOP === "1",
+    openAtLogin: settings.openAtLogin !== false,
     updateStatus: await readUpdateStatus()
   };
 }
@@ -33,14 +34,16 @@ export async function GET(): Promise<NextResponse> {
   return NextResponse.json(await settingsStatus(await readAppSettings()));
 }
 
-// Each value sent replaces the stored one; an empty string removes it.
+// Each text value sent replaces the stored one; an empty string removes it. openAtLogin is a switch.
 export async function PUT(request: Request): Promise<NextResponse> {
   const payload: unknown = await request.json().catch(() => undefined);
   const fields = { apiKey: "anthropicApiKey", updateToken: "githubUpdateToken" } as const;
-  if (typeof payload !== "object" || payload === null || !Object.keys(fields).some((name) => typeof (payload as Record<string, unknown>)[name] === "string")) {
-    return NextResponse.json({ error: "An API key or update token is required." }, { status: 400 });
+  const openAtLogin = typeof payload === "object" && payload !== null && "openAtLogin" in payload && typeof payload.openAtLogin === "boolean" ? payload.openAtLogin : undefined;
+  if (typeof payload !== "object" || payload === null || (openAtLogin === undefined && !Object.keys(fields).some((name) => typeof (payload as Record<string, unknown>)[name] === "string"))) {
+    return NextResponse.json({ error: "An API key, update token or start-up choice is required." }, { status: 400 });
   }
   const settings = await readAppSettings();
+  if (openAtLogin !== undefined) settings.openAtLogin = openAtLogin;
   for (const [name, key] of Object.entries(fields)) {
     const value = (payload as Record<string, unknown>)[name];
     if (typeof value !== "string") continue;

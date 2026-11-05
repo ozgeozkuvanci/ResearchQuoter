@@ -74,6 +74,9 @@ interface Alternative {
 const activeProjectKey = "research-workspace.active-project";
 const readerWidthKey = "research-workspace.reader-width";
 const viewKey = "research-workspace.view";
+// The section and PDF last open in each project, so the app reopens where work stopped.
+const sectionKey = (projectId: string) => `research-workspace.section.${projectId}`;
+const sourceKey = (projectId: string) => `research-workspace.source.${projectId}`;
 
 async function fetchBibliography(projectId: string): Promise<string[]> {
   const response = await fetch(`/api/projects/${projectId}/bibliography`);
@@ -106,6 +109,12 @@ export function ProjectLauncher() {
   const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const editorParagraphsRef = useRef<EditorParagraph[]>([]);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Which project the loaded sections and sources belong to, so a selection is only remembered for
+  // its own project while another one is still loading.
+  const sectionsProjectRef = useRef("");
+  const sourcesProjectRef = useRef("");
+  const savingRef = useRef<Promise<boolean> | null>(null);
+  const flushRef = useRef<() => Promise<void>>(async () => undefined);
 
   const selectedSection = sections.find((section) => section.id === selectedSectionId) ?? sections[0];
   const selectedSource = sources.find((source) => source.id === selectedSourceId);
@@ -128,19 +137,26 @@ export function ProjectLauncher() {
     const response = await fetch(`/api/projects/${projectId}/document`);
     if (!response.ok) return;
     const payload = await response.json() as { sections?: DocumentSection[]; evidence?: EvidenceLink[]; revision?: number };
+    sectionsProjectRef.current = projectId;
     setSections(payload.sections ?? []);
     setEvidence(payload.evidence ?? []);
     setDocumentRevision(payload.revision ?? 0);
-    setSelectedSectionId((current) => payload.sections?.some((section) => section.id === current) ? current : payload.sections?.[0]?.id ?? "");
+    setSelectedSectionId((current) => {
+      for (const candidate of [current, readStorage(sectionKey(projectId))]) {
+        if (candidate && payload.sections?.some((section) => section.id === candidate)) return candidate;
+      }
+      return payload.sections?.[0]?.id ?? "";
+    });
     setBibliography(await fetchBibliography(projectId));
   }, []);
 
   const loadSources = useCallback(async (projectId: string, preferredId?: string) => {
     const response = await fetch(`/api/projects/${projectId}/sources`);
     const items: Source[] = response.ok ? await response.json() : [];
+    sourcesProjectRef.current = projectId;
     setSources(items);
     setSelectedSourceId((current) => {
-      for (const candidate of [preferredId, current]) {
+      for (const candidate of [preferredId, current, readStorage(sourceKey(projectId))]) {
         if (candidate && items.some((source) => source.id === candidate)) return candidate;
       }
       return items[0]?.id ?? "";
@@ -168,12 +184,28 @@ export function ProjectLauncher() {
     void loadSources(selectedProjectId);
   }, [selectedProjectId, loadDocument, loadSources]);
 
+  useEffect(() => {
+    if (selectedProjectId && sectionsProjectRef.current === selectedProjectId && selectedSection !== undefined) writeStorage(sectionKey(selectedProjectId), selectedSection.id);
+  }, [selectedProjectId, selectedSection?.id]);
+
+  useEffect(() => {
+    if (selectedProjectId && sourcesProjectRef.current === selectedProjectId && selectedSourceId) writeStorage(sourceKey(selectedProjectId), selectedSourceId);
+  }, [selectedProjectId, selectedSourceId]);
+
   function notify(kind: "success" | "error", text: string): void {
     setMessage({ kind, text });
     if (kind === "success") setTimeout(() => setMessage((current) => current?.text === text ? null : current), 4000);
   }
 
-  async function saveSection(update: { title?: string; paragraphs?: EditorParagraph[] }, sectionId = selectedSection?.id): Promise<boolean> {
+  function saveSection(update: { title?: string; paragraphs?: EditorParagraph[] }, sectionId = selectedSection?.id): Promise<boolean> {
+    const saving = sendSection(update, sectionId).finally(() => {
+      if (savingRef.current === saving) savingRef.current = null;
+    });
+    savingRef.current = saving;
+    return saving;
+  }
+
+  async function sendSection(update: { title?: string; paragraphs?: EditorParagraph[] }, sectionId: string | undefined): Promise<boolean> {
     if (!selectedProjectId || sectionId === undefined) return false;
     setSaveState("saving");
     const response = await fetch(`/api/projects/${selectedProjectId}/document`, {
@@ -206,6 +238,29 @@ export function ProjectLauncher() {
     saveTimerRef.current = undefined;
     await saveSection({ paragraphs: editorParagraphsRef.current });
   }
+  flushRef.current = async () => {
+    await flushPendingSave();
+    await savingRef.current;
+  };
+
+  // Closing the window while a change is still waiting to be saved first saves it, then closes.
+  useEffect(() => {
+    let closing = false;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (closing) return;
+      // Leaving a field saves it (the section title saves on blur).
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      if (saveTimerRef.current === undefined && savingRef.current === null) return;
+      event.preventDefault();
+      event.returnValue = "";
+      void flushRef.current().finally(() => {
+        closing = true;
+        window.close();
+      });
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, []);
 
   function handleEditorInput(paragraphs: EditorParagraph[]): void {
     editorParagraphsRef.current = paragraphs;
@@ -480,7 +535,7 @@ export function ProjectLauncher() {
         )}
         {selectedSource === undefined
           ? <p className="muted reader-empty">Bir PDF seçin ya da soldan + ile ekleyin.</p>
-          : <PdfReader url={selectedSource.pdfUrl} jumpToPage={jumpToPage} highlights={highlights} onSelection={handleSelection} />}
+          : <PdfReader url={selectedSource.pdfUrl} jumpToPage={jumpToPage} highlights={highlights} onSelection={handleSelection} resumeKey={selectedSource.id} />}
       </section>
 
       {dialogs}
@@ -779,27 +834,28 @@ function ParaphraseDialog({ selection, sourceTitle, sections, defaultSectionId, 
 interface UpdateSettings {
   isDesktop: boolean;
   hasUpdateToken: boolean;
+  openAtLogin: boolean;
   updateStatus: { message: string; at: string } | null;
 }
 
 function SettingsDialog({ hasApiKey, onClose, onSaved }: { hasApiKey: boolean; onClose: () => void; onSaved: (hasApiKey: boolean) => void }) {
   const [apiKey, setApiKey] = useState("");
   const [updateToken, setUpdateToken] = useState("");
-  const [updates, setUpdates] = useState<UpdateSettings>({ isDesktop: false, hasUpdateToken: false, updateStatus: null });
+  const [updates, setUpdates] = useState<UpdateSettings>({ isDesktop: false, hasUpdateToken: false, openAtLogin: true, updateStatus: null });
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Polled while open so a check started by saving the token shows its outcome here.
   useEffect(() => {
     const load = () => void fetch("/api/settings").then(async (response) => response.ok ? response.json() : null).then((payload: Partial<UpdateSettings> | null) => {
-      if (payload !== null) setUpdates({ isDesktop: payload.isDesktop === true, hasUpdateToken: payload.hasUpdateToken === true, updateStatus: payload.updateStatus ?? null });
+      if (payload !== null) setUpdates({ isDesktop: payload.isDesktop === true, hasUpdateToken: payload.hasUpdateToken === true, openAtLogin: payload.openAtLogin !== false, updateStatus: payload.updateStatus ?? null });
     });
     load();
     const timer = setInterval(load, 4000);
     return () => clearInterval(timer);
   }, []);
 
-  async function put(body: Record<string, string>): Promise<Record<string, unknown> | null> {
+  async function put(body: Record<string, string | boolean>): Promise<Record<string, unknown> | null> {
     const response = await fetch("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const payload: unknown = await response.json();
     if (!response.ok || typeof payload !== "object" || payload === null || !("hasApiKey" in payload)) {
@@ -824,6 +880,12 @@ function SettingsDialog({ hasApiKey, onClose, onSaved }: { hasApiKey: boolean; o
     setUpdateMessage(payload.hasUpdateToken === true ? "Kaydedildi. Program güncellemeleri bu anahtarla kontrol edecek." : "Anahtar silindi.");
   }
 
+  async function saveOpenAtLogin(openAtLogin: boolean): Promise<void> {
+    setUpdates((current) => ({ ...current, openAtLogin }));
+    const payload = await put({ openAtLogin });
+    if (payload !== null) setUpdates((current) => ({ ...current, openAtLogin: payload.openAtLogin !== false }));
+  }
+
   return (
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="app-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
@@ -841,6 +903,16 @@ function SettingsDialog({ hasApiKey, onClose, onSaved }: { hasApiKey: boolean; o
             <button type="submit">Kaydet</button>
           </div>
         </form>
+        {updates.isDesktop ? (
+          <div className="settings-section">
+            <h3>Açılış</h3>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={updates.openAtLogin} onChange={(event) => void saveOpenAtLogin(event.target.checked)} />
+              Bilgisayar açılınca programı başlat
+            </label>
+            <p className="muted">Program her açılışta en son çalıştığınız projeye, bölüme, PDF'e ve sayfaya döner. Yazdıklarınız ve notlarınız siz yazarken kaydedilir.</p>
+          </div>
+        ) : null}
         {updates.isDesktop ? (
           <form className="settings-section" onSubmit={saveUpdateToken}>
             <h3>Otomatik güncelleme</h3>
