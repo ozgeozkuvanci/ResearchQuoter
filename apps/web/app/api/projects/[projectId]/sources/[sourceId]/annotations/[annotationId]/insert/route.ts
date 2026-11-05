@@ -26,7 +26,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         select: {
           reference: { select: { id: true, cslData: true } },
           versions: { orderBy: { versionNumber: "desc" }, take: 1, select: { pdfAsset: { select: { id: true, checksum: true } } } },
-          annotations: { where: { id: annotationId, deletedAt: null }, select: { id: true, anchors: { orderBy: { createdAt: "asc" }, take: 1, select: { id: true, pageIndex: true, selectedText: true } }, researchNotes: { where: { deletedAt: null }, take: 1, select: { id: true } } } }
+          annotations: { where: { id: annotationId, type: { not: "STICKY_NOTE" }, deletedAt: null }, select: { id: true, anchors: { orderBy: { createdAt: "asc" }, take: 1, select: { id: true, pageIndex: true, selectedText: true } }, researchNotes: { where: { deletedAt: null }, take: 1, select: { id: true } } } }
         }
       });
       const annotation = source?.annotations[0];

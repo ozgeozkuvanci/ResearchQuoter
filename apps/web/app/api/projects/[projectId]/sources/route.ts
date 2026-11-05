@@ -32,7 +32,7 @@ export async function GET(_request: Request, context: { params: Promise<{ projec
               annotations: {
                 where: { deletedAt: null },
                 orderBy: { createdAt: "desc" },
-                select: { id: true, color: true, anchors: { select: { id: true, pageIndex: true, selectedText: true } }, researchNotes: { where: { deletedAt: null }, select: { content: true } } }
+                select: { id: true, type: true, color: true, createdAt: true, anchors: { select: { id: true, pageIndex: true, selectedText: true } }, researchNotes: { where: { deletedAt: null }, select: { content: true } } }
               }
             }
           }
@@ -47,13 +47,21 @@ export async function GET(_request: Request, context: { params: Promise<{ projec
         filename: source.versions[0]?.pdfAsset.originalFilename ?? null,
         byteSize: source.versions[0]?.pdfAsset.byteSize.toString() ?? null,
         pdfUrl: `/api/projects/${projectId}/sources/${source.id}/pdf`,
-        captures: source.annotations.flatMap((annotation) => annotation.anchors.map((anchor) => ({
+        captures: source.annotations.filter((annotation) => annotation.type !== "STICKY_NOTE").flatMap((annotation) => annotation.anchors.map((anchor) => ({
           annotationId: annotation.id,
           anchorId: anchor.id,
           pageNumber: anchor.pageIndex + 1,
           selectedText: anchor.selectedText ?? "",
           color: annotation.color,
           note: annotation.researchNotes[0]?.content ?? ""
+        }))),
+        // Reading notes: what the reader wrote on a page, with the passage it is about when one was selected.
+        notes: source.annotations.filter((annotation) => annotation.type === "STICKY_NOTE").flatMap((annotation) => annotation.anchors.slice(0, 1).map((anchor) => ({
+          id: annotation.id,
+          pageNumber: anchor.pageIndex + 1,
+          selectedText: anchor.selectedText ?? "",
+          content: annotation.researchNotes[0]?.content ?? "",
+          createdAt: annotation.createdAt.toISOString()
         })))
       })));
     } finally {

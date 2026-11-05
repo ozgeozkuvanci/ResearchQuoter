@@ -7,13 +7,19 @@ import { useEffect, useRef, useState } from "react";
 
 import { pdfAssetOptions } from "./pdf-options";
 
-export type SelectionAction = "paraphrase" | "quote";
+export type SelectionAction = "paraphrase" | "quote" | "note";
 
 export interface PdfHighlight {
   id: string;
   pageNumber: number;
   text: string;
-  kind: "quote" | "paraphrase";
+  kind: "quote" | "paraphrase" | "note";
+}
+
+export interface PdfOutlineEntry {
+  title: string;
+  page: number;
+  depth: number;
 }
 
 interface PdfReaderProps {
@@ -21,7 +27,18 @@ interface PdfReaderProps {
   jumpToPage: { page: number; token: number } | null;
   highlights: PdfHighlight[];
   onSelection: (action: SelectionAction, text: string, pageNumber: number) => void;
+  // What right-clicking a selection offers; copying is always there.
+  actions?: SelectionAction[];
+  // Pages are as wide as the reader, up to maxPageWidth, then multiplied by zoom.
+  maxPageWidth?: number;
+  zoom?: number;
+  // The reading screen shows the table of contents in its own bar instead of above the pages.
+  hideOutline?: boolean;
+  onDocumentInfo?: (info: { numPages: number; outline: PdfOutlineEntry[] }) => void;
+  onPageChange?: (pageNumber: number) => void;
 }
+
+const actionLabels: Record<SelectionAction, string> = { paraphrase: "Paraphrase", quote: "Alıntı olarak ekle", note: "Not ekle" };
 
 interface MenuState {
   x: number;
@@ -33,14 +50,18 @@ interface MenuState {
 
 // Renders a PDF with selectable text. Right-clicking a selection offers to paraphrase or quote it,
 // and reports the page the selection starts on so the citation can point back to it.
-export function PdfReader({ url, jumpToPage, highlights, onSelection }: PdfReaderProps) {
+export function PdfReader({ url, jumpToPage, highlights, onSelection, actions = ["paraphrase", "quote"], maxPageWidth, zoom = 1, hideOutline = false, onDocumentInfo, onPageChange }: PdfReaderProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [aspectRatio, setAspectRatio] = useState(1.414);
-  const [width, setWidth] = useState(0);
+  const [availableWidth, setAvailableWidth] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [outline, setOutline] = useState<OutlineEntry[]>([]);
+  const [outline, setOutline] = useState<PdfOutlineEntry[]>([]);
+  const currentPageRef = useRef(1);
+  const callbacksRef = useRef({ onDocumentInfo, onPageChange });
+  callbacksRef.current = { onDocumentInfo, onPageChange };
+  const width = availableWidth === 0 ? 0 : Math.round(Math.min(availableWidth, maxPageWidth ?? availableWidth) * zoom);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,8 +81,13 @@ export function PdfReader({ url, jumpToPage, highlights, onSelection }: PdfReade
         if (cancelled) return;
         setAspectRatio(viewport.height / viewport.width);
         setPdf(loaded);
+        currentPageRef.current = 1;
+        callbacksRef.current.onPageChange?.(1);
+        callbacksRef.current.onDocumentInfo?.({ numPages: loaded.numPages, outline: [] });
         const entries = await readOutline(loaded).catch(() => []);
-        if (!cancelled) setOutline(entries);
+        if (cancelled) return;
+        setOutline(entries);
+        callbacksRef.current.onDocumentInfo?.({ numPages: loaded.numPages, outline: entries });
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "PDF açılamadı.");
       }
@@ -76,7 +102,7 @@ export function PdfReader({ url, jumpToPage, highlights, onSelection }: PdfReade
     const element = containerRef.current;
     if (element === null) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const measure = () => setWidth(Math.max(320, Math.floor(element.clientWidth - 32)));
+    const measure = () => setAvailableWidth(Math.max(320, Math.floor(element.clientWidth - 32)));
     measure();
     const observer = new ResizeObserver(() => {
       clearTimeout(timer);
@@ -93,6 +119,28 @@ export function PdfReader({ url, jumpToPage, highlights, onSelection }: PdfReade
     if (jumpToPage === null || pdf === null) return;
     containerRef.current?.querySelector(`[data-page="${jumpToPage.page}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [jumpToPage, pdf]);
+
+  // Zooming changes every page's height, so the page being read is brought back into view.
+  useEffect(() => {
+    if (width === 0) return;
+    containerRef.current?.querySelector(`[data-page="${currentPageRef.current}"]`)?.scrollIntoView({ block: "start" });
+  }, [width]);
+
+  function handleScroll(): void {
+    const container = containerRef.current;
+    if (container === null) return;
+    // The page being read is the last one whose top has passed the upper third of the reader.
+    const line = container.getBoundingClientRect().top + container.clientHeight / 3;
+    let page = 1;
+    for (const element of container.querySelectorAll<HTMLElement>("[data-page]")) {
+      if (element.getBoundingClientRect().top > line) break;
+      page = Number(element.dataset.page);
+    }
+    if (page !== currentPageRef.current) {
+      currentPageRef.current = page;
+      onPageChange?.(page);
+    }
+  }
 
   useEffect(() => {
     if (menu === null) return;
@@ -125,8 +173,8 @@ export function PdfReader({ url, jumpToPage, highlights, onSelection }: PdfReade
   }
 
   return (
-    <div className="pdf-reader" ref={containerRef} onContextMenu={handleContextMenu}>
-      {outline.length === 0 ? null : (
+    <div className="pdf-reader" ref={containerRef} onContextMenu={handleContextMenu} onScroll={handleScroll}>
+      {outline.length === 0 || hideOutline ? null : (
         <div className="pdf-toolbar">
           <select aria-label="PDF içindekiler" value="" onChange={(event) => {
             containerRef.current?.querySelector(`[data-page="${event.target.value}"]`)?.scrollIntoView({ block: "start" });
@@ -143,8 +191,7 @@ export function PdfReader({ url, jumpToPage, highlights, onSelection }: PdfReade
       ))}
       {menu === null ? null : (
         <div className="context-menu" role="menu" style={{ left: menu.x, top: menu.y }} onClick={(event) => event.stopPropagation()}>
-          <button type="button" role="menuitem" onClick={() => choose("paraphrase")}>Paraphrase</button>
-          <button type="button" role="menuitem" onClick={() => choose("quote")}>Alıntı olarak ekle</button>
+          {actions.map((action) => <button key={action} type="button" role="menuitem" onClick={() => choose(action)}>{actionLabels[action]}</button>)}
           <button type="button" role="menuitem" onClick={() => { void navigator.clipboard.writeText(menu.text); setMenu(null); }}>Kopyala</button>
         </div>
       )}
@@ -157,8 +204,8 @@ function PdfPage({ pdf, pageNumber, width, placeholderHeight, highlights }: { pd
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
-  const [renderedHeight, setRenderedHeight] = useState<number | null>(null);
-  const height = renderedHeight ?? placeholderHeight;
+  const [renderedRatio, setRenderedRatio] = useState<number | null>(null);
+  const height = renderedRatio === null ? placeholderHeight : width * renderedRatio;
   const [scale, setScale] = useState(1);
   const [textLayerVersion, setTextLayerVersion] = useState(0);
   const [marks, setMarks] = useState<HighlightRect[]>([]);
@@ -191,7 +238,7 @@ function PdfPage({ pdf, pageNumber, width, placeholderHeight, highlights }: { pd
       const canvas = canvasRef.current;
       const textContainer = textRef.current;
       if (cancelled || canvas === null || textContainer === null) return;
-      setRenderedHeight(viewport.height);
+      setRenderedRatio(viewport.height / viewport.width);
       setScale(viewport.scale);
       const pixelRatio = window.devicePixelRatio || 1;
       canvas.width = Math.floor(viewport.width * pixelRatio);
@@ -237,17 +284,11 @@ function PdfPage({ pdf, pageNumber, width, placeholderHeight, highlights }: { pd
   );
 }
 
-interface OutlineEntry {
-  title: string;
-  page: number;
-  depth: number;
-}
-
 type OutlineNode = { title: string; dest: string | unknown[] | null; items: OutlineNode[] };
 
 // The PDF's own bookmarks (chapter and section headings), two levels deep, with their page numbers.
-async function readOutline(pdf: PDFDocumentProxy): Promise<OutlineEntry[]> {
-  const entries: OutlineEntry[] = [];
+async function readOutline(pdf: PDFDocumentProxy): Promise<PdfOutlineEntry[]> {
+  const entries: PdfOutlineEntry[] = [];
   const visit = async (nodes: OutlineNode[], depth: number): Promise<void> => {
     for (const node of nodes) {
       const destination = typeof node.dest === "string" ? await pdf.getDestination(node.dest) : node.dest;

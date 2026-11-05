@@ -11,6 +11,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
   const { projectId, sourceId } = await context.params;
   const body: unknown = await request.json();
   if (!isCaptureRequest(body)) return NextResponse.json({ error: "A quote and a valid page number are required." }, { status: 400 });
+  const isNote = body.kind === "note";
 
   try {
     const developmentContext = await getDevelopmentProjectContext();
@@ -29,7 +30,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         const asset = source?.versions[0]?.pdfAsset;
         if (source === null || source === undefined || asset === undefined) throw new Error("Source PDF not found.");
         const annotation = await transaction.annotation.create({
-          data: { academicProjectId: projectId, sourceDocumentId: source.id, pdfAssetId: asset.id, type: "TEXT_HIGHLIGHT", color: body.color ?? "yellow" }
+          data: { academicProjectId: projectId, sourceDocumentId: source.id, pdfAssetId: asset.id, type: isNote ? "STICKY_NOTE" : "TEXT_HIGHLIGHT", color: body.color ?? (isNote ? "green" : "yellow") }
         });
         const anchor = await transaction.annotationAnchor.create({
           data: {
@@ -40,8 +41,8 @@ export async function POST(request: Request, context: { params: Promise<{ projec
             pageLabel: String(body.pageNumber),
             selectorType: "TEXT",
             rects: [],
-            selectedText: body.selectedText,
-            selectedTextHash: createHash("sha256").update(body.selectedText).digest("hex")
+            selectedText: body.selectedText.length === 0 ? null : body.selectedText,
+            selectedTextHash: body.selectedText.length === 0 ? null : createHash("sha256").update(body.selectedText).digest("hex")
           }
         });
         const note = body.note.length === 0 ? null : await transaction.researchNote.create({ data: { annotationId: annotation.id, content: body.note } });
@@ -57,11 +58,16 @@ export async function POST(request: Request, context: { params: Promise<{ projec
   }
 }
 
-function isCaptureRequest(value: unknown): value is { selectedText: string; pageNumber: number; note: string; color?: string } {
-  if (typeof value !== "object" || value === null || !("selectedText" in value) || !("pageNumber" in value)) return false;
-  const selectedText = value.selectedText;
+// A quote needs the selected passage; a reading note needs its text and may or may not be about a passage.
+function isCaptureRequest(value: unknown): value is { selectedText: string; pageNumber: number; note: string; color?: string; kind?: "note" } {
+  if (typeof value !== "object" || value === null || !("pageNumber" in value)) return false;
+  const kind = "kind" in value ? value.kind : undefined;
+  const selectedText = "selectedText" in value ? value.selectedText : "";
   const pageNumber = value.pageNumber;
   const note = "note" in value ? value.note : "";
   const color = "color" in value ? value.color : undefined;
-  return typeof selectedText === "string" && selectedText.trim().length > 0 && selectedText.length <= 20_000 && typeof pageNumber === "number" && Number.isInteger(pageNumber) && pageNumber > 0 && pageNumber <= 10_000 && typeof note === "string" && note.length <= 20_000 && (color === undefined || typeof color === "string");
+  if (kind !== undefined && kind !== "note") return false;
+  if (typeof selectedText !== "string" || typeof note !== "string") return false;
+  const hasContent = kind === "note" ? note.trim().length > 0 : selectedText.trim().length > 0;
+  return hasContent && selectedText.length <= 20_000 && typeof pageNumber === "number" && Number.isInteger(pageNumber) && pageNumber > 0 && pageNumber <= 10_000 && note.length <= 20_000 && (color === undefined || typeof color === "string");
 }

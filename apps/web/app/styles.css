@@ -621,6 +621,10 @@ blockquote {
   background: rgb(90 160 230 / 32%);
 }
 
+.pdf-highlight.note {
+  background: rgb(52 168 83 / 26%);
+}
+
 .pdf-page .textLayer ::selection {
   background: rgb(47 111 223 / 28%);
 }
@@ -656,6 +660,250 @@ blockquote {
 
 .context-menu button:hover {
   background: var(--surface-hover);
+}
+
+/* Reading screen: the PDF large in the middle, notes beside it, one thin bar on top */
+
+.reading-view {
+  background: var(--surface-soft);
+  display: grid;
+  grid-template-areas:
+    "bar"
+    "pdf";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 2.5rem minmax(0, 1fr);
+  height: 100vh;
+}
+
+.reading-view.with-notes {
+  grid-template-areas:
+    "bar bar"
+    "pdf notes";
+  grid-template-columns: minmax(0, 1fr) 21rem;
+}
+
+.reading-bar {
+  align-items: center;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  font-size: 0.85rem;
+  gap: 0.35rem;
+  grid-area: bar;
+  min-width: 0;
+  padding: 0 0.6rem;
+}
+
+.reading-bar button {
+  padding: 0.2rem 0.55rem;
+}
+
+.reading-bar select {
+  background: transparent;
+  border-color: transparent;
+  font-size: 0.85rem;
+  min-width: 0;
+  padding: 0.2rem 0.4rem;
+}
+
+.reading-bar select:hover {
+  border-color: var(--border);
+}
+
+.reading-source {
+  font-weight: 600;
+  max-width: 28rem;
+}
+
+.reading-outline {
+  max-width: 14rem;
+}
+
+.reading-page {
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5rem;
+  text-align: center;
+}
+
+.reading-zoom {
+  align-items: center;
+  display: flex;
+  gap: 0.1rem;
+}
+
+.reading-zoom .muted {
+  font-variant-numeric: tabular-nums;
+  min-width: 2.8rem;
+  text-align: center;
+}
+
+.reading-bar .ghost-button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.reading-pdf {
+  display: flex;
+  flex-direction: column;
+  grid-area: pdf;
+  min-height: 0;
+}
+
+.reading-pdf .pdf-reader {
+  overflow-x: auto;
+  padding: 1.5rem 1rem;
+}
+
+.reading-notes {
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  grid-area: notes;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.note-composer {
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.9rem 1rem 1rem;
+}
+
+.note-composer p {
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.note-composer blockquote {
+  font-size: 0.85rem;
+  max-height: 7rem;
+  padding-right: 2rem;
+  position: relative;
+}
+
+.note-composer blockquote .delete-button {
+  position: absolute;
+  right: 0.2rem;
+  top: 0.2rem;
+}
+
+.note-composer-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.note-composer-actions .muted {
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.notes-empty {
+  font-size: 0.85rem;
+  padding: 1.5rem 1rem;
+  text-align: center;
+}
+
+.note-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem;
+}
+
+.note-list li {
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  margin-bottom: 0.25rem;
+  padding: 0.5rem 0.6rem;
+}
+
+.note-list li:hover {
+  background: var(--surface-soft);
+}
+
+.note-list li.current {
+  border-color: var(--border);
+}
+
+.note-body {
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  display: grid;
+  font-weight: 400;
+  gap: 0.3rem;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.note-body:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+.note-page {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.note-list .note-passage {
+  border-left: 3px solid rgb(52 168 83 / 60%);
+  color: var(--muted);
+  display: -webkit-box;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  overflow: hidden;
+  padding-left: 0.5rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.note-text {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.note-actions {
+  display: flex;
+  gap: 0.25rem;
+  justify-content: flex-end;
+  margin-top: 0.3rem;
+}
+
+.note-list li {
+  position: relative;
+}
+
+/* Edit and delete appear in the note's corner only while the pointer is over it. */
+.note-list li > .note-actions {
+  background: var(--surface-soft);
+  border-radius: 6px;
+  margin: 0;
+  position: absolute;
+  right: 0.35rem;
+  top: 0.3rem;
+  visibility: hidden;
+}
+
+.note-list li:hover > .note-actions,
+.note-list li:focus-within > .note-actions {
+  visibility: visible;
+}
+
+.note-actions button {
+  font-size: 0.78rem;
+  padding: 0.15rem 0.5rem;
+}
+
+.ghost-button.danger {
+  color: var(--danger);
 }
 
 /* Dialogs */
@@ -802,4 +1050,10 @@ blockquote {
   .reader-column {
     min-height: 80vh;
   }
+}
+
+.note-composer blockquote,
+.note-list .note-passage {
+  background: rgb(52 168 83 / 7%);
+  border-left-color: rgb(52 168 83 / 60%);
 }

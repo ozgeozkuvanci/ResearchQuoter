@@ -4,7 +4,9 @@ import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { type PdfDetails, readPdfDetails } from "./pdf-metadata";
+import { readStorage, writeStorage } from "./browser-storage";
 import { PdfReader, type SelectionAction } from "./pdf-reader";
+import { type ReadingNote, ReadingView } from "./reading-view";
 
 interface Capture {
   annotationId: string;
@@ -24,6 +26,7 @@ interface Source {
   byteSize: string | null;
   pdfUrl: string;
   captures: Capture[];
+  notes: ReadingNote[];
 }
 
 interface EvidenceLink {
@@ -57,7 +60,7 @@ interface DocumentSection {
 }
 
 interface PendingSelection {
-  action: SelectionAction;
+  action: Exclude<SelectionAction, "note">;
   text: string;
   pageNumber: number;
   sourceId: string;
@@ -70,6 +73,7 @@ interface Alternative {
 
 const activeProjectKey = "research-workspace.active-project";
 const readerWidthKey = "research-workspace.reader-width";
+const viewKey = "research-workspace.view";
 
 async function fetchBibliography(projectId: string): Promise<string[]> {
   const response = await fetch(`/api/projects/${projectId}/bibliography`);
@@ -94,6 +98,7 @@ export function ProjectLauncher() {
   const [showSourceForm, setShowSourceForm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showProjectForm, setShowProjectForm] = useState(false);
+  const [reading, setReading] = useState(false);
   const [readerWidth, setReaderWidth] = useState(0);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [pending, setPending] = useState<PendingSelection | null>(null);
@@ -144,6 +149,7 @@ export function ProjectLauncher() {
 
   useEffect(() => {
     setReaderWidth(Number(readStorage(readerWidthKey)) || 0);
+    setReading(readStorage(viewKey) === "reading");
     void loadProjects();
     void fetch("/api/settings").then(async (response) => response.ok ? response.json() : { hasApiKey: false }).then((payload: { hasApiKey: boolean }) => setHasApiKey(payload.hasApiKey));
   }, [loadProjects]);
@@ -274,8 +280,14 @@ export function ProjectLauncher() {
     setJumpToPage({ page: link.pageNumber, token: Date.now() });
   }
 
+  async function switchView(toReading: boolean): Promise<void> {
+    if (toReading) await flushPendingSave();
+    setReading(toReading);
+    writeStorage(viewKey, toReading ? "reading" : "writing");
+  }
+
   function handleSelection(action: SelectionAction, text: string, pageNumber: number): void {
-    if (!selectedSourceId) return;
+    if (!selectedSourceId || action === "note") return;
     setPending({ action, text, pageNumber, sourceId: selectedSourceId });
   }
 
@@ -320,6 +332,23 @@ export function ProjectLauncher() {
     );
   }
 
+  if (reading && selectedProjectId) {
+    return (
+      <>
+        <ReadingView
+          projectId={selectedProjectId}
+          sources={sources}
+          sourceId={selectedSourceId}
+          onSourceChange={setSelectedSourceId}
+          onClose={() => void switchView(false)}
+          onNotesChanged={() => loadSources(selectedProjectId)}
+          notify={notify}
+        />
+        {message === null ? null : <p className={`toast ${message.kind}`} role="status" onClick={() => setMessage(null)}>{message.text}</p>}
+      </>
+    );
+  }
+
   const sectionLinkIds = new Set(selectedSection?.blocks.flatMap((block) => (block.links ?? []).map((link) => link.linkId)) ?? []);
   const sectionEvidence = evidence.filter((link) => sectionLinkIds.has(link.id));
   const highlights = evidence
@@ -341,6 +370,7 @@ export function ProjectLauncher() {
           </form>
         ) : <button className="ghost-button" type="button" onClick={() => setShowProjectForm(true)}>+ Yeni proje</button>}
         <span className="spacer" />
+        {sources.length === 0 ? null : <button className="ghost-button" type="button" title="PDF'i tam ekran okuyup yanına not alın" onClick={() => void switchView(true)}>📖 Okuma ve notlar</button>}
         {selectedProjectId ? <span className="export-links"><span className="muted">Dışa aktar</span><a className="pill-link" href={`/api/projects/${selectedProjectId}/export?format=docx`}>Word</a><a className="pill-link" href={`/api/projects/${selectedProjectId}/export?format=latex`}>LaTeX</a></span> : null}
         <button className="ghost-button" type="button" onClick={() => setShowSettings(true)}>⚙ Ayarlar</button>
       </header>
@@ -373,7 +403,7 @@ export function ProjectLauncher() {
             <li key={source.id} className={source.id === selectedSourceId ? "active" : ""}>
               <button type="button" onClick={() => { setSelectedSourceId(source.id); setOpenedEvidence(null); }}>
                 {source.title}
-                <span className="muted">{[source.author, source.captures.length > 0 ? `${source.captures.length} alıntı` : undefined].filter(Boolean).join(" · ")}</span>
+                <span className="muted">{[source.author, source.captures.length > 0 ? `${source.captures.length} alıntı` : undefined, source.notes.length > 0 ? `${source.notes.length} not` : undefined].filter(Boolean).join(" · ")}</span>
               </button>
             </li>
           ))}
@@ -852,20 +882,4 @@ async function copyText(text: string): Promise<void> {
 
 function getErrorMessage(value: unknown): string {
   return typeof value === "object" && value !== null && "error" in value && typeof value.error === "string" ? value.error : "İşlem tamamlanamadı.";
-}
-
-function readStorage(key: string): string | null {
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function writeStorage(key: string, value: string): void {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    // Remembering the last choice is a convenience only.
-  }
 }
