@@ -332,6 +332,31 @@ export function ProjectLauncher() {
     );
   }
 
+  const highlights = evidence
+    .filter((link) => link.sourceDocumentId === selectedSourceId)
+    .map((link) => ({ id: link.id, pageNumber: link.pageNumber, text: link.selectedText, kind: link.status === "PARAPHRASE" ? "paraphrase" as const : "quote" as const }));
+
+  // Paraphrasing and quoting work the same from the writing screen and the reading screen.
+  const dialogs = <>
+    {pending === null || selectedSection === undefined ? null : (
+      <ParaphraseDialog
+        key={`${pending.sourceId}-${pending.pageNumber}-${pending.text}`}
+        selection={pending}
+        sourceTitle={sources.find((source) => source.id === pending.sourceId)?.title ?? ""}
+        sections={sections}
+        defaultSectionId={selectedSection.id}
+        hasApiKey={hasApiKey}
+        onOpenSettings={() => setShowSettings(true)}
+        onClose={() => setPending(null)}
+        onInsert={async (note, sectionId, paraphrase) => {
+          if (await insertSelection(pending, note, sectionId, paraphrase)) setPending(null);
+        }}
+      />
+    )}
+
+    {showSettings ? <SettingsDialog hasApiKey={hasApiKey} onClose={() => setShowSettings(false)} onSaved={(value) => { setHasApiKey(value); setShowSettings(false); }} /> : null}
+  </>;
+
   if (reading && selectedProjectId) {
     return (
       <>
@@ -339,21 +364,21 @@ export function ProjectLauncher() {
           projectId={selectedProjectId}
           sources={sources}
           sourceId={selectedSourceId}
+          quoteHighlights={highlights}
           onSourceChange={setSelectedSourceId}
+          onPassage={handleSelection}
           onClose={() => void switchView(false)}
           onNotesChanged={() => loadSources(selectedProjectId)}
           notify={notify}
         />
         {message === null ? null : <p className={`toast ${message.kind}`} role="status" onClick={() => setMessage(null)}>{message.text}</p>}
+        {dialogs}
       </>
     );
   }
 
   const sectionLinkIds = new Set(selectedSection?.blocks.flatMap((block) => (block.links ?? []).map((link) => link.linkId)) ?? []);
   const sectionEvidence = evidence.filter((link) => sectionLinkIds.has(link.id));
-  const highlights = evidence
-    .filter((link) => link.sourceDocumentId === selectedSourceId)
-    .map((link) => ({ id: link.id, pageNumber: link.pageNumber, text: link.selectedText, kind: link.status === "PARAPHRASE" ? "paraphrase" as const : "quote" as const }));
 
   return (
     <div className="workspace" style={readerWidth > 0 ? { "--reader-width": `${readerWidth}px` } as React.CSSProperties : undefined}>
@@ -458,23 +483,7 @@ export function ProjectLauncher() {
           : <PdfReader url={selectedSource.pdfUrl} jumpToPage={jumpToPage} highlights={highlights} onSelection={handleSelection} />}
       </section>
 
-      {pending === null || selectedSection === undefined ? null : (
-        <ParaphraseDialog
-          key={`${pending.sourceId}-${pending.pageNumber}-${pending.text}`}
-          selection={pending}
-          sourceTitle={sources.find((source) => source.id === pending.sourceId)?.title ?? ""}
-          sections={sections}
-          defaultSectionId={selectedSection.id}
-          hasApiKey={hasApiKey}
-          onOpenSettings={() => setShowSettings(true)}
-          onClose={() => setPending(null)}
-          onInsert={async (note, sectionId, paraphrase) => {
-            if (await insertSelection(pending, note, sectionId, paraphrase)) setPending(null);
-          }}
-        />
-      )}
-
-      {showSettings ? <SettingsDialog hasApiKey={hasApiKey} onClose={() => setShowSettings(false)} onSaved={(value) => { setHasApiKey(value); setShowSettings(false); }} /> : null}
+      {dialogs}
     </div>
   );
 }

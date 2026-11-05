@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { readStorage, writeStorage } from "./browser-storage";
-import { type PdfOutlineEntry, PdfReader, type SelectionAction } from "./pdf-reader";
+import { type PdfHighlight, type PdfOutlineEntry, PdfReader, type SelectionAction } from "./pdf-reader";
 
 export interface ReadingNote {
   id: string;
@@ -24,7 +24,11 @@ interface ReadingViewProps {
   projectId: string;
   sources: ReadingSource[];
   sourceId: string;
+  // Passages already paraphrased or quoted into the text, shown as in the writing screen.
+  quoteHighlights: PdfHighlight[];
   onSourceChange: (sourceId: string) => void;
+  // Paraphrase and quote open the same dialog as in the writing screen.
+  onPassage: (action: SelectionAction, text: string, pageNumber: number) => void;
   onClose: () => void;
   onNotesChanged: () => Promise<void>;
   notify: (kind: "success" | "error", text: string) => void;
@@ -36,7 +40,7 @@ const zoomSteps = [0.6, 0.75, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2];
 
 // A quiet screen for reading one PDF and writing notes beside it. Each note belongs to the page it
 // was written on and, when it was started from a selection, to that passage too.
-export function ReadingView({ projectId, sources, sourceId, onSourceChange, onClose, onNotesChanged, notify }: ReadingViewProps) {
+export function ReadingView({ projectId, sources, sourceId, quoteHighlights, onSourceChange, onPassage, onClose, onNotesChanged, notify }: ReadingViewProps) {
   const source = sources.find((item) => item.id === sourceId) ?? sources[0];
   const [zoom, setZoom] = useState(1);
   const [showNotes, setShowNotes] = useState(true);
@@ -74,7 +78,7 @@ export function ReadingView({ projectId, sources, sourceId, onSourceChange, onCl
 
   const notes = [...source.notes].sort((first, second) => first.pageNumber - second.pageNumber || first.createdAt.localeCompare(second.createdAt));
   const draftPage = draftPassage?.pageNumber ?? currentPage;
-  const highlights = notes.filter((note) => note.selectedText.length > 0).map((note) => ({ id: note.id, pageNumber: note.pageNumber, text: note.selectedText, kind: "note" as const }));
+  const highlights = [...quoteHighlights, ...notes.filter((note) => note.selectedText.length > 0).map((note) => ({ id: note.id, pageNumber: note.pageNumber, text: note.selectedText, kind: "note" as const }))];
 
   function changeZoom(direction: 1 | -1): void {
     const index = zoomSteps.indexOf(zoom);
@@ -95,7 +99,10 @@ export function ReadingView({ projectId, sources, sourceId, onSourceChange, onCl
   }
 
   function handleSelection(action: SelectionAction, text: string, pageNumber: number): void {
-    if (action !== "note") return;
+    if (action !== "note") {
+      onPassage(action, text, pageNumber);
+      return;
+    }
     setDraftPassage({ text, pageNumber });
     if (!showNotes) toggleNotes();
     setTimeout(() => draftRef.current?.focus(), 0);
@@ -172,7 +179,7 @@ export function ReadingView({ projectId, sources, sourceId, onSourceChange, onCl
           url={source.pdfUrl}
           jumpToPage={jumpToPage}
           highlights={highlights}
-          actions={["note"]}
+          actions={["note", "paraphrase", "quote"]}
           maxPageWidth={860}
           zoom={zoom}
           hideOutline
@@ -202,7 +209,7 @@ export function ReadingView({ projectId, sources, sourceId, onSourceChange, onCl
               onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) void saveDraft(); }}
             />
             <div className="note-composer-actions">
-              <span className="muted">Metin seçip sağ tıklayarak o kısma da not ekleyebilirsiniz.</span>
+              <span className="muted">Metni seçip sağ tıklayarak o kısma not ekleyebilir ya da paraphrase yapabilirsiniz.</span>
               <button type="submit" disabled={draft.trim().length === 0 || saving}>Kaydet</button>
             </div>
           </form>
