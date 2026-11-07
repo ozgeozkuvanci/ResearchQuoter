@@ -63,4 +63,15 @@ describe("document sections", () => {
     expect(result[0]?.blocks[0]?.links).toEqual([{ linkId: "old", offset: 14 }]);
     expect(result[0]?.blocks[1]?.links).toEqual([{ linkId: "new", offset: 1 }]);
   });
+
+  it("keeps pictures with their captions through editing, appending and saving", () => {
+    const image = `${"a".repeat(64)}.png`;
+    const section = { id: "a", title: "", blocks: [] };
+    const edited = replaceSectionBlocks(section, [{ nodeId: "n1", text: "Text" }, { text: "", image }, { nodeId: "f2", text: "Şekil 1", image, links: [{ linkId: "x", offset: 0 }] }]);
+    const content = appendToSection(writeSections([edited]), "a", "n3", "Added");
+    const blocks = readSections(content)[0]?.blocks ?? [];
+
+    expect(blocks.map((block) => block.image)).toEqual([undefined, image, image, undefined]);
+    expect(blocks[2]).toEqual({ nodeId: "f2", text: "Şekil 1", image });
+  });
 });

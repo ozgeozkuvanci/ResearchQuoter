@@ -4,6 +4,7 @@ import { createDatabaseClient, type Prisma } from "@research/db";
 import { NextResponse } from "next/server";
 
 import { getDevelopmentProjectContext } from "../../../../../lib/development-context";
+import { isImageFileName } from "../../../../../lib/document-images";
 import { type EvidenceMarker, readSections, replaceSectionBlocks, replaceSectionText, sectionLinkIds, sectionText, withLegacyMarkers, writeSections } from "../../../../../lib/document-sections";
 
 export const runtime = "nodejs";
@@ -146,7 +147,7 @@ async function withDocument(
   }
 }
 
-function isSectionUpdate(value: unknown): value is { sectionId?: string; title?: string; text?: string; paragraphs?: Array<{ nodeId?: string; text: string; links?: EvidenceMarker[] }> } {
+function isSectionUpdate(value: unknown): value is { sectionId?: string; title?: string; text?: string; paragraphs?: Array<{ nodeId?: string; text: string; links?: EvidenceMarker[]; image?: string }> } {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
   const optionalString = (key: string) => record[key] === undefined || typeof record[key] === "string";
@@ -160,6 +161,7 @@ function isParagraph(value: unknown): boolean {
   const paragraph = value as Record<string, unknown>;
   return typeof paragraph.text === "string"
     && (paragraph.nodeId === undefined || typeof paragraph.nodeId === "string")
+    && (paragraph.image === undefined || (typeof paragraph.image === "string" && isImageFileName(paragraph.image)))
     && (paragraph.links === undefined || (Array.isArray(paragraph.links) && paragraph.links.every((link: unknown) =>
       typeof link === "object" && link !== null && typeof (link as Record<string, unknown>).linkId === "string" && typeof (link as Record<string, unknown>).offset === "number")));
 }

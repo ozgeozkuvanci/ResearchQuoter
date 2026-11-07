@@ -1071,3 +1071,74 @@ blockquote {
   margin: 0;
   width: 1rem;
 }
+
+/* Pictures in the writing area */
+
+.editor-meta {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+  margin: 0.15rem 0 1.2rem;
+}
+
+.editor-meta .save-state {
+  margin: 0;
+}
+
+.editor-meta .ghost-button {
+  font-size: 0.85rem;
+  padding: 0.2rem 0.6rem;
+}
+
+.doc-figure {
+  margin: 1.25rem 0;
+  position: relative;
+  text-align: center;
+}
+
+.doc-figure img {
+  border-radius: 4px;
+  display: block;
+  margin: 0 auto;
+  max-height: 32rem;
+  max-width: 100%;
+}
+
+.doc-figure figcaption {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-style: italic;
+  margin-top: 0.45rem;
+  min-height: 1.3em;
+  outline: none;
+}
+
+.doc-figure figcaption:empty::before {
+  color: #b0b5bd;
+  content: attr(data-placeholder);
+}
+
+.figure-remove {
+  background: rgb(255 255 255 / 92%);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.2rem 0.5rem;
+  position: absolute;
+  right: 0.4rem;
+  top: 0.4rem;
+  visibility: hidden;
+}
+
+.doc-figure:hover .figure-remove {
+  visibility: visible;
+}
+
+.figure-remove:hover {
+  background: #fff;
+  border-color: var(--border-strong);
+  color: var(--danger);
+}

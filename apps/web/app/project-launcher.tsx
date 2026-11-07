@@ -44,6 +44,8 @@ interface DocumentBlock {
   nodeId: string;
   text: string;
   links?: Array<{ linkId: string; offset: number }>;
+  // A picture block: the stored picture's file name; the text is its caption.
+  image?: string;
 }
 
 // A paragraph as read back from the writing area; nodeId is missing for paragraphs typed there.
@@ -51,6 +53,7 @@ interface EditorParagraph {
   nodeId?: string;
   text: string;
   links: Array<{ linkId: string; offset: number }>;
+  image?: string;
 }
 
 interface DocumentSection {
@@ -114,6 +117,9 @@ export function ProjectLauncher() {
   const sectionsProjectRef = useRef("");
   const sourcesProjectRef = useRef("");
   const savingRef = useRef<Promise<boolean> | null>(null);
+  const editorRootRef = useRef<HTMLDivElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const imageAnchorRef = useRef<Node | null>(null);
   const flushRef = useRef<() => Promise<void>>(async () => undefined);
 
   const selectedSection = sections.find((section) => section.id === selectedSectionId) ?? sections[0];
@@ -270,6 +276,30 @@ export function ProjectLauncher() {
       saveTimerRef.current = undefined;
       void saveSection({ paragraphs: editorParagraphsRef.current });
     }, 800);
+  }
+
+  // Pictures go in after the paragraph holding the caret (or where they were dropped), or at the end.
+  async function insertImages(files: File[], anchor: Node | null): Promise<void> {
+    const pictures = files.filter((file) => file.type.startsWith("image/"));
+    if (pictures.length === 0 || selectedSection === undefined) return;
+    const stored: string[] = [];
+    for (const picture of pictures) {
+      const form = new FormData();
+      form.append("file", picture);
+      const response = await fetch("/api/images", { method: "POST", body: form });
+      const payload: unknown = await response.json().catch(() => null);
+      if (response.ok && typeof payload === "object" && payload !== null && "file" in payload && typeof payload.file === "string") stored.push(payload.file);
+      else notify("error", `"${picture.name}" eklenemedi. PNG, JPEG, GIF ya da WebP biçiminde ve 20 MB'tan küçük olmalı.`);
+    }
+    const root = editorRootRef.current;
+    if (stored.length === 0 || root === null) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = undefined;
+    const { paragraphs, insertAt } = readEditorBlocks(root, anchor);
+    const figures = stored.map((file) => ({ text: "", links: [], image: file }));
+    if (await saveSection({ paragraphs: [...paragraphs.slice(0, insertAt), ...figures, ...paragraphs.slice(insertAt)] })) {
+      setDocumentRevision((revision) => revision + 1);
+    }
   }
 
   async function openSection(sectionId: string): Promise<void> {
@@ -502,14 +532,40 @@ export function ProjectLauncher() {
             onBlur={(event) => { if (event.target.value !== selectedSection.title) void saveSection({ title: event.target.value }); }}
             onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
           />
-          <p className="save-state muted">{saveState === "saved" ? "Kaydedildi" : saveState === "saving" ? "Kaydediliyor…" : "Değişiklikler kaydedilecek…"}</p>
+          <div className="editor-meta">
+            <p className="save-state muted">{saveState === "saved" ? "Kaydedildi" : saveState === "saving" ? "Kaydediliyor…" : "Değişiklikler kaydedilecek…"}</p>
+            <button
+              className="ghost-button"
+              type="button"
+              title="Resim ekle (resmi yazının içine sürükleyip bırakabilir ya da yapıştırabilirsiniz)"
+              onMouseDown={() => {
+                const anchor = window.getSelection()?.anchorNode ?? null;
+                imageAnchorRef.current = anchor !== null && editorRootRef.current?.contains(anchor) ? anchor : null;
+              }}
+              onClick={() => imageInputRef.current?.click()}
+            >🖼 Resim ekle</button>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              hidden
+              onChange={(event) => {
+                const files = [...(event.target.files ?? [])];
+                event.target.value = "";
+                void insertImages(files, imageAnchorRef.current);
+              }}
+            />
+          </div>
           <EditorArea
             key={`${selectedSection.id}-${documentRevision}`}
+            rootRef={editorRootRef}
             blocks={selectedSection.blocks}
             evidence={evidence}
             onInput={handleEditorInput}
             onBlur={() => void flushPendingSave()}
             onOpenEvidence={openEvidence}
+            onInsertImages={(files, anchor) => void insertImages(files, anchor)}
           />
           {sectionEvidence.length === 0 ? null : <div className="evidence-links">
             <h3>Bu bölümdeki referanslar</h3>
@@ -622,12 +678,14 @@ function SourceForm({ onSubmit }: { onSubmit: (form: FormData) => Promise<boolea
 // under the cursor. It remounts (via its key) when another section opens or a citation is inserted.
 // Every quote ends in a marker that cannot be typed into: the text around it stays editable, and
 // deleting the marker deletes the quote's link to the PDF.
-function EditorArea({ blocks, evidence, onInput, onBlur, onOpenEvidence }: {
+function EditorArea({ rootRef, blocks, evidence, onInput, onBlur, onOpenEvidence, onInsertImages }: {
+  rootRef: React.RefObject<HTMLDivElement | null>;
   blocks: DocumentBlock[];
   evidence: EvidenceLink[];
   onInput: (paragraphs: EditorParagraph[]) => void;
   onBlur: () => void;
   onOpenEvidence: (link: EvidenceLink) => void;
+  onInsertImages: (files: File[], anchor: Node | null) => void;
 }) {
   const [initial] = useState(() => ({ blocks, evidence }));
   const evidenceRef = useRef(evidence);
@@ -640,8 +698,13 @@ function EditorArea({ blocks, evidence, onInput, onBlur, onOpenEvidence }: {
     return marker !== null;
   }
 
+  function pictureFiles(transfer: DataTransfer): File[] {
+    return [...transfer.files].filter((file) => file.type.startsWith("image/"));
+  }
+
   return (
     <div
+      ref={rootRef}
       className="document-writing-area"
       aria-label="Bölüm metni"
       aria-multiline="true"
@@ -651,9 +714,38 @@ function EditorArea({ blocks, evidence, onInput, onBlur, onOpenEvidence }: {
       data-placeholder="Yazmaya başlayın. PDF'te bir metni seçip sağ tıklayarak paraphrase'ini buraya ekleyebilirsiniz."
       onInput={(event) => onInput(readEditorParagraphs(event.currentTarget))}
       onMouseDown={(event) => { if (openMarker(event.target)) event.preventDefault(); }}
+      onClick={(event) => {
+        const remove = event.target instanceof Element ? event.target.closest("[data-remove-figure]") : null;
+        if (remove === null) return;
+        remove.closest("figure")?.remove();
+        onInput(readEditorParagraphs(event.currentTarget));
+      }}
+      onKeyDown={(event) => {
+        // A caption is one line.
+        if (event.key === "Enter" && event.target instanceof Element && event.target.closest("figcaption") !== null) event.preventDefault();
+      }}
+      onPaste={(event) => {
+        const files = pictureFiles(event.clipboardData);
+        if (files.length === 0) return;
+        event.preventDefault();
+        onInsertImages(files, window.getSelection()?.anchorNode ?? null);
+      }}
+      onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }}
+      onDrop={(event) => {
+        const files = pictureFiles(event.dataTransfer);
+        if (files.length === 0) return;
+        event.preventDefault();
+        onInsertImages(files, document.caretRangeFromPoint?.(event.clientX, event.clientY)?.startContainer ?? (event.target instanceof Node ? event.target : null));
+      }}
       onBlur={onBlur}
     >
-      {initial.blocks.map((block) => (
+      {initial.blocks.map((block) => block.image !== undefined ? (
+        <figure key={block.nodeId} className="doc-figure" data-node-id={block.nodeId} data-image={block.image} contentEditable={false}>
+          <img src={`/api/images/${block.image}`} alt={block.text || "Resim"} draggable={false} />
+          <figcaption contentEditable suppressContentEditableWarning data-placeholder="Resim açıklaması yazın (isteğe bağlı)">{block.text}</figcaption>
+          <button className="figure-remove" type="button" title="Resmi kaldır" data-remove-figure>×</button>
+        </figure>
+      ) : (
         <p key={block.nodeId} data-node-id={block.nodeId}>
           {paragraphParts(block).map((part, index) => typeof part === "string"
             ? part
@@ -692,7 +784,13 @@ function paragraphParts(block: DocumentBlock): Array<string | { linkId: string }
 
 // Reads the writing area back into paragraphs, recording where each marker sits in the text.
 function readEditorParagraphs(root: HTMLElement): EditorParagraph[] {
-  const paragraphs: EditorParagraph[] = [];
+  return readEditorBlocks(root, null).paragraphs;
+}
+
+// Also reports where something inserted just after the anchor node's paragraph would go in the
+// returned list: the end when there is no anchor.
+function readEditorBlocks(root: HTMLElement, anchor: Node | null): { paragraphs: EditorParagraph[]; insertAt: number } {
+  const blocks: Array<{ paragraph: EditorParagraph; node: Node }> = [];
   let loose: EditorParagraph | null = null;
   const collect = (node: Node, paragraph: EditorParagraph): void => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -705,15 +803,24 @@ function readEditorParagraphs(root: HTMLElement): EditorParagraph[] {
       paragraph.links.push({ linkId, offset: paragraph.text.length });
       return;
     }
-    if (node.tagName === "BR") return;
+    if (node.tagName === "BR" || node.tagName === "FIGURE") return;
     node.childNodes.forEach((child) => collect(child, paragraph));
   };
   root.childNodes.forEach((node) => {
+    if (node instanceof HTMLElement && node.tagName === "FIGURE") {
+      loose = null;
+      const image = node.getAttribute("data-image");
+      const nodeId = node.getAttribute("data-node-id");
+      if (image === null) return;
+      const caption = (node.querySelector("figcaption")?.textContent ?? "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+      blocks.push({ paragraph: { ...(nodeId === null ? {} : { nodeId }), text: caption, links: [], image }, node });
+      return;
+    }
     const isBlock = node instanceof HTMLElement && ["P", "DIV"].includes(node.tagName);
     if (!isBlock) {
       if (loose === null) {
         loose = { text: "", links: [] };
-        paragraphs.push(loose);
+        blocks.push({ paragraph: loose, node });
       }
       collect(node, loose);
       return;
@@ -722,9 +829,12 @@ function readEditorParagraphs(root: HTMLElement): EditorParagraph[] {
     const nodeId = node.getAttribute("data-node-id");
     const paragraph: EditorParagraph = { ...(nodeId === null ? {} : { nodeId }), text: "", links: [] };
     node.childNodes.forEach((child) => collect(child, paragraph));
-    paragraphs.push(paragraph);
+    blocks.push({ paragraph, node });
   });
-  return paragraphs.filter((paragraph) => paragraph.text.trim().length > 0 || paragraph.links.length > 0);
+  const anchorBlock = anchor === null ? -1 : blocks.findIndex((block) => block.node === anchor || block.node.contains(anchor));
+  const kept = blocks.filter((block) => block.paragraph.image !== undefined || block.paragraph.text.trim().length > 0 || block.paragraph.links.length > 0);
+  const insertAt = anchorBlock < 0 ? kept.length : kept.filter((block) => blocks.indexOf(block) <= anchorBlock).length;
+  return { paragraphs: kept.map((block) => block.paragraph), insertAt };
 }
 
 function ParaphraseDialog({ selection, sourceTitle, sections, defaultSectionId, hasApiKey, onOpenSettings, onClose, onInsert }: {

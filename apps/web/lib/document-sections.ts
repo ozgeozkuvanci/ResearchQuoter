@@ -7,6 +7,9 @@ import { randomUUID } from "node:crypto";
 // A paragraph's content is text nodes with `evidenceMarker` nodes between them. A marker stands for
 // one provenance link: it travels with the surrounding text when that text is edited, and deleting
 // the marker deletes the link.
+//
+// A picture is a `figure` block in the same list: its `image` attribute names the stored picture
+// file and its text is the caption.
 
 export interface EvidenceMarker {
   linkId: string;
@@ -18,6 +21,8 @@ export interface DocumentParagraph {
   nodeId: string;
   text: string;
   links?: EvidenceMarker[];
+  // Present on picture blocks: the stored picture's file name. The text is then its caption.
+  image?: string;
 }
 
 export interface DocumentSection {
@@ -58,6 +63,9 @@ export function writeSections(sections: readonly DocumentSection[]): Record<stri
       type: "section",
       attrs: { id: section.id, title: section.title },
       content: section.blocks.map((block) => {
+        if (block.image !== undefined) {
+          return { type: "figure", attrs: { id: block.nodeId, image: block.image }, ...(block.text.length > 0 ? { content: [{ type: "text", text: block.text }] } : {}) };
+        }
         const inline = paragraphContent(block);
         return { type: "paragraph", attrs: { id: block.nodeId }, ...(inline.length > 0 ? { content: inline } : {}) };
       })
@@ -77,7 +85,7 @@ export function replaceSectionText(section: DocumentSection, text: string): Docu
 // Replaces a section's paragraphs with what the editor sent. Paragraph ids the editor duplicated
 // (splitting a paragraph copies its id) or left out get fresh ones, and each link keeps only its
 // first marker.
-export function replaceSectionBlocks(section: DocumentSection, paragraphs: ReadonlyArray<{ nodeId?: string; text: string; links?: readonly EvidenceMarker[] }>): DocumentSection {
+export function replaceSectionBlocks(section: DocumentSection, paragraphs: ReadonlyArray<{ nodeId?: string; text: string; links?: readonly EvidenceMarker[]; image?: string }>): DocumentSection {
   const seenNodes = new Set<string>();
   const seenLinks = new Set<string>();
   return {
@@ -85,6 +93,7 @@ export function replaceSectionBlocks(section: DocumentSection, paragraphs: Reado
     blocks: paragraphs.map((paragraph) => {
       const nodeId = paragraph.nodeId !== undefined && !seenNodes.has(paragraph.nodeId) ? paragraph.nodeId : randomUUID();
       seenNodes.add(nodeId);
+      if (paragraph.image !== undefined) return { nodeId, text: paragraph.text, image: paragraph.image };
       const links = (paragraph.links ?? []).filter((link) => !seenLinks.has(link.linkId)).map((link) => {
         seenLinks.add(link.linkId);
         return { linkId: link.linkId, offset: Math.max(0, Math.min(paragraph.text.length, link.offset)) };
@@ -99,7 +108,7 @@ export function appendToSection(content: unknown, sectionId: string | undefined,
   const target = sections.find((section) => section.id === sectionId) ?? sections[sections.length - 1];
   const block: DocumentParagraph = { nodeId, text, ...(linkId === undefined ? {} : { links: [{ linkId, offset: text.length }] }) };
   return writeSections(sections.map((section) => section === target
-    ? { ...section, blocks: [...section.blocks.filter((existing) => existing.text.length > 0 || (existing.links?.length ?? 0) > 0), block] }
+    ? { ...section, blocks: [...section.blocks.filter((existing) => existing.text.length > 0 || (existing.links?.length ?? 0) > 0 || existing.image !== undefined), block] }
     : section));
 }
 
@@ -128,6 +137,11 @@ export function sectionText(section: DocumentSection): string {
 
 function readParagraph(node: unknown): DocumentParagraph[] {
   if (!isRecord(node) || !isRecord(node.attrs) || typeof node.attrs.id !== "string") return [];
+  if (node.type === "figure") {
+    if (typeof node.attrs.image !== "string") return [];
+    const caption = (Array.isArray(node.content) ? node.content : []).map((child) => isRecord(child) && typeof child.text === "string" ? child.text : "").join("");
+    return [{ nodeId: node.attrs.id, text: caption, image: node.attrs.image }];
+  }
   let text = "";
   const links: EvidenceMarker[] = [];
   for (const child of Array.isArray(node.content) ? node.content : []) {
