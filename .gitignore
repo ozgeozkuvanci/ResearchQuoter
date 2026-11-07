@@ -27,3 +27,8 @@ HANDOFF_TO_OTHER_COMPUTER.md
 database.sql
 *.dump
 *.backup
+.desktop-cache/
+apps/web/public/pdf.worker.min.mjs
+apps/web/public/pdfjs/
+.local-settings.json
+apps/desktop/package-lock.json

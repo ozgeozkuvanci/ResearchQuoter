@@ -6,6 +6,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tiptap/pm": "latest"
+    "@tiptap/pm": "3.29.2"
   }
 }

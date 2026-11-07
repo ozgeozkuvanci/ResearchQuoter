@@ -9,3 +9,6 @@ allowBuilds:
   electron-winstaller: false
   prisma: true
   sharp: false
+
+# A flat node_modules lets the Next.js standalone server be copied into the desktop installer intact.
+nodeLinker: hoisted

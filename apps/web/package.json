@@ -3,21 +3,25 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
+    "prebuild": "node scripts/copy-pdf-worker.mjs",
     "build": "next build",
+    "predev": "node scripts/copy-pdf-worker.mjs",
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.135.0",
     "@research/application": "workspace:*",
     "@research/citations": "workspace:*",
     "@research/contracts": "workspace:*",
     "@research/db": "workspace:*",
     "@research/storage": "workspace:*",
     "docx": "^9.7.1",
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest"
+    "next": "16.3.0",
+    "pdfjs-dist": "6.4.299",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   }
 }

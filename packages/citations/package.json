@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "citation-js": "latest",
-    "zod": "latest"
+    "citation-js": "0.8.2",
+    "zod": "4.4.3"
   }
 }

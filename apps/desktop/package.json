@@ -1,6 +1,6 @@
 {
   "name": "@research/desktop",
-  "version": "0.1.0",
+  "version": "0.3.6",
   "private": true,
   "description": "Windows desktop shell for Research Workspace",
   "type": "module",
@@ -14,6 +14,15 @@
     "appId": "com.researchworkspace.desktop",
     "productName": "Research Workspace",
     "asar": true,
+    "electronVersion": "43.3.0",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ozgeozkuvanci",
+        "repo": "researchquoter-releases",
+        "releaseType": "release"
+      }
+    ],
     "directories": {
       "output": "../../dist/desktop"
     },
@@ -57,5 +66,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Research Workspace"
     }
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
   }
 }

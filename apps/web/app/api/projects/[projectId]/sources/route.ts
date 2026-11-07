@@ -32,7 +32,7 @@ export async function GET(_request: Request, context: { params: Promise<{ projec
               annotations: {
                 where: { deletedAt: null },
                 orderBy: { createdAt: "desc" },
-                select: { id: true, color: true, anchors: { select: { id: true, pageIndex: true, selectedText: true } }, researchNotes: { where: { deletedAt: null }, select: { content: true } } }
+                select: { id: true, type: true, color: true, createdAt: true, anchors: { select: { id: true, pageIndex: true, selectedText: true } }, researchNotes: { where: { deletedAt: null }, select: { content: true } } }
               }
             }
           }
@@ -47,13 +47,21 @@ export async function GET(_request: Request, context: { params: Promise<{ projec
         filename: source.versions[0]?.pdfAsset.originalFilename ?? null,
         byteSize: source.versions[0]?.pdfAsset.byteSize.toString() ?? null,
         pdfUrl: `/api/projects/${projectId}/sources/${source.id}/pdf`,
-        captures: source.annotations.flatMap((annotation) => annotation.anchors.map((anchor) => ({
+        captures: source.annotations.filter((annotation) => annotation.type !== "STICKY_NOTE").flatMap((annotation) => annotation.anchors.map((anchor) => ({
           annotationId: annotation.id,
           anchorId: anchor.id,
           pageNumber: anchor.pageIndex + 1,
           selectedText: anchor.selectedText ?? "",
           color: annotation.color,
           note: annotation.researchNotes[0]?.content ?? ""
+        }))),
+        // Reading notes: what the reader wrote on a page, with the passage it is about when one was selected.
+        notes: source.annotations.filter((annotation) => annotation.type === "STICKY_NOTE").flatMap((annotation) => annotation.anchors.slice(0, 1).map((anchor) => ({
+          id: annotation.id,
+          pageNumber: anchor.pageIndex + 1,
+          selectedText: anchor.selectedText ?? "",
+          content: annotation.researchNotes[0]?.content ?? "",
+          createdAt: annotation.createdAt.toISOString()
         })))
       })));
     } finally {
@@ -69,6 +77,8 @@ export async function POST(request: Request, context: { params: Promise<{ projec
   const formData = await request.formData();
   const title = formData.get("title");
   const author = formData.get("author");
+  const doiField = formData.get("doi");
+  const doi = typeof doiField === "string" && /^10\.\d{4,9}\/\S+$/.test(doiField.trim()) ? doiField.trim() : undefined;
   const year = formData.get("year");
   const uploadedFile = formData.get("file");
   if (typeof title !== "string" || title.trim().length === 0 || !(uploadedFile instanceof File)) {
@@ -93,16 +103,21 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         if (project === null) {
           throw new Error("Project access denied.");
         }
+        const authors = parseAuthors(typeof author === "string" ? author : "");
         const reference = await transaction.reference.create({
           data: {
             workspaceId: developmentContext.workspaceId,
             status: "CONFIRMED",
             title: title.trim(),
-            cslData: { id: crypto.randomUUID(), type: "article-journal", title: title.trim(), author: author ? [{ literal: String(author) }] : [], issued: year ? { "date-parts": [[Number(year)]] } : undefined }
+            cslData: { id: crypto.randomUUID(), type: "article-journal", title: title.trim(), author: authors.map((name) => name.family === undefined ? { literal: name.literal } : { family: name.family, given: name.given }), issued: year ? { "date-parts": [[Number(year)]] } : undefined, ...(doi === undefined ? {} : { DOI: doi }) }
           }
         });
-        if (typeof author === "string" && author.trim().length > 0) {
-          await transaction.contributor.create({ data: { referenceId: reference.id, role: "author", position: 0, literalName: author.trim() } });
+        for (const [position, name] of authors.entries()) {
+          await transaction.contributor.create({
+            data: name.family === undefined
+              ? { referenceId: reference.id, role: "author", position, literalName: name.literal }
+              : { referenceId: reference.id, role: "author", position, familyName: name.family, givenName: name.given }
+          });
         }
         const asset = await transaction.pdfAsset.upsert({
           where: { workspaceId_checksum: { workspaceId: developmentContext.workspaceId, checksum: storedAsset.checksum } },
@@ -120,4 +135,15 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     const message = error instanceof Error ? error.message : "Source upload failed.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+// "Soyad, Ad; Soyad, Ad" becomes structured names so APA cites only the family name.
+// A name without a comma (for example an institution) stays a literal name.
+function parseAuthors(value: string): Array<{ family?: string; given: string; literal: string }> {
+  return value.split(";").map((name) => name.trim()).filter((name) => name.length > 0).map((name) => {
+    const [family, ...given] = name.split(",");
+    return given.length === 0 || family === undefined
+      ? { given: "", literal: name }
+      : { family: family.trim(), given: given.join(",").trim(), literal: name };
+  });
 }
