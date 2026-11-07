@@ -1142,3 +1142,37 @@ blockquote {
   border-color: var(--border-strong);
   color: var(--danger);
 }
+
+.document-writing-area {
+  counter-reset: figure;
+}
+
+.doc-figure {
+  counter-increment: figure;
+}
+
+.figure-caption-row {
+  align-items: baseline;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.85rem;
+  gap: 0.35rem;
+  justify-content: center;
+  margin-top: 0.45rem;
+}
+
+.figure-number {
+  font-style: italic;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.figure-number::before {
+  content: attr(data-prefix) counter(figure) ".";
+}
+
+.doc-figure .figure-caption-row figcaption {
+  margin-top: 0;
+  min-width: 10rem;
+  text-align: left;
+}

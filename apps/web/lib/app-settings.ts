@@ -9,6 +9,8 @@ export interface AppSettings {
   githubUpdateToken?: string;
   // Read by the desktop shell: whether it starts when Windows starts. Missing means yes.
   openAtLogin?: boolean;
+  // The word before picture numbers in captions ("Şekil 1.2" or "Figure 1.2"). Missing means Şekil.
+  figureLabel?: string;
 }
 
 function settingsPath(): string {

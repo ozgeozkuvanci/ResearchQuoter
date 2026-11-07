@@ -107,6 +107,7 @@ export function ProjectLauncher() {
   const [reading, setReading] = useState(false);
   const [readerWidth, setReaderWidth] = useState(0);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [figureLabel, setFigureLabel] = useState("Şekil");
   const [pending, setPending] = useState<PendingSelection | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "unsaved">("saved");
   const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
@@ -173,7 +174,10 @@ export function ProjectLauncher() {
     setReaderWidth(Number(readStorage(readerWidthKey)) || 0);
     setReading(readStorage(viewKey) === "reading");
     void loadProjects();
-    void fetch("/api/settings").then(async (response) => response.ok ? response.json() : { hasApiKey: false }).then((payload: { hasApiKey: boolean }) => setHasApiKey(payload.hasApiKey));
+    void fetch("/api/settings").then(async (response) => response.ok ? response.json() : { hasApiKey: false }).then((payload: { hasApiKey: boolean; figureLabel?: string }) => {
+      setHasApiKey(payload.hasApiKey);
+      if (payload.figureLabel !== undefined) setFigureLabel(payload.figureLabel);
+    });
   }, [loadProjects]);
 
   useEffect(() => {
@@ -439,7 +443,7 @@ export function ProjectLauncher() {
       />
     )}
 
-    {showSettings ? <SettingsDialog hasApiKey={hasApiKey} onClose={() => setShowSettings(false)} onSaved={(value) => { setHasApiKey(value); setShowSettings(false); }} /> : null}
+    {showSettings ? <SettingsDialog hasApiKey={hasApiKey} figureLabel={figureLabel} onFigureLabel={setFigureLabel} onClose={() => setShowSettings(false)} onSaved={(value) => { setHasApiKey(value); setShowSettings(false); }} /> : null}
   </>;
 
   if (reading && selectedProjectId) {
@@ -560,6 +564,7 @@ export function ProjectLauncher() {
           <EditorArea
             key={`${selectedSection.id}-${documentRevision}`}
             rootRef={editorRootRef}
+            figurePrefix={`${figureLabel} ${sections.indexOf(selectedSection) + 1}.`}
             blocks={selectedSection.blocks}
             evidence={evidence}
             onInput={handleEditorInput}
@@ -678,8 +683,11 @@ function SourceForm({ onSubmit }: { onSubmit: (form: FormData) => Promise<boolea
 // under the cursor. It remounts (via its key) when another section opens or a citation is inserted.
 // Every quote ends in a marker that cannot be typed into: the text around it stays editable, and
 // deleting the marker deletes the quote's link to the PDF.
-function EditorArea({ rootRef, blocks, evidence, onInput, onBlur, onOpenEvidence, onInsertImages }: {
+function EditorArea({ rootRef, figurePrefix, blocks, evidence, onInput, onBlur, onOpenEvidence, onInsertImages }: {
   rootRef: React.RefObject<HTMLDivElement | null>;
+  // "Şekil 3." for the third section; each picture's own number is added by a CSS counter, so it
+  // stays right when pictures are removed or moved.
+  figurePrefix: string;
   blocks: DocumentBlock[];
   evidence: EvidenceLink[];
   onInput: (paragraphs: EditorParagraph[]) => void;
@@ -742,7 +750,10 @@ function EditorArea({ rootRef, blocks, evidence, onInput, onBlur, onOpenEvidence
       {initial.blocks.map((block) => block.image !== undefined ? (
         <figure key={block.nodeId} className="doc-figure" data-node-id={block.nodeId} data-image={block.image} contentEditable={false}>
           <img src={`/api/images/${block.image}`} alt={block.text || "Resim"} draggable={false} />
-          <figcaption contentEditable suppressContentEditableWarning data-placeholder="Resim açıklaması yazın (isteğe bağlı)">{block.text}</figcaption>
+          <div className="figure-caption-row">
+            <span className="figure-number" data-prefix={figurePrefix} aria-hidden="true" />
+            <figcaption contentEditable suppressContentEditableWarning data-placeholder="Resim açıklaması yazın">{block.text}</figcaption>
+          </div>
           <button className="figure-remove" type="button" title="Resmi kaldır" data-remove-figure>×</button>
         </figure>
       ) : (
@@ -948,7 +959,7 @@ interface UpdateSettings {
   updateStatus: { message: string; at: string } | null;
 }
 
-function SettingsDialog({ hasApiKey, onClose, onSaved }: { hasApiKey: boolean; onClose: () => void; onSaved: (hasApiKey: boolean) => void }) {
+function SettingsDialog({ hasApiKey, figureLabel, onFigureLabel, onClose, onSaved }: { hasApiKey: boolean; figureLabel: string; onFigureLabel: (label: string) => void; onClose: () => void; onSaved: (hasApiKey: boolean) => void }) {
   const [apiKey, setApiKey] = useState("");
   const [updateToken, setUpdateToken] = useState("");
   const [updates, setUpdates] = useState<UpdateSettings>({ isDesktop: false, hasUpdateToken: false, openAtLogin: true, updateStatus: null });
@@ -1013,6 +1024,19 @@ function SettingsDialog({ hasApiKey, onClose, onSaved }: { hasApiKey: boolean; o
             <button type="submit">Kaydet</button>
           </div>
         </form>
+        <div className="settings-section">
+          <h3>Resim yazıları</h3>
+          <label htmlFor="figure-label">Resimlerin altındaki numara</label>
+          <select id="figure-label" value={figureLabel} onChange={(event) => {
+            const label = event.target.value;
+            onFigureLabel(label);
+            void put({ figureLabel: label });
+          }}>
+            <option value="Şekil">Şekil 1.1, Şekil 1.2 …</option>
+            <option value="Figure">Figure 1.1, Figure 1.2 …</option>
+          </select>
+          <p className="muted">İlk sayı bölümün sırası, ikincisi o bölümdeki resmin sırasıdır. Word'e aktarınca Word'ün kendi "Resim Yazısı" olarak gelir; Word'de şekiller listesi de oluşturabilirsiniz.</p>
+        </div>
         {updates.isDesktop ? (
           <div className="settings-section">
             <h3>Açılış</h3>

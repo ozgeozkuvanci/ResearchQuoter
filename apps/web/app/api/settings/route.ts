@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 
 import { type AppSettings, getAnthropicApiKey, readAppSettings, writeAppSettings } from "../../../lib/app-settings";
+import { isFigureLabel } from "../../../lib/figure-numbers";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,7 @@ async function settingsStatus(settings: AppSettings) {
     hasUpdateToken: settings.githubUpdateToken !== undefined,
     isDesktop: process.env.RESEARCH_DESKTOP === "1",
     openAtLogin: settings.openAtLogin !== false,
+    figureLabel: isFigureLabel(settings.figureLabel) ? settings.figureLabel : "Şekil",
     updateStatus: await readUpdateStatus()
   };
 }
@@ -39,11 +41,13 @@ export async function PUT(request: Request): Promise<NextResponse> {
   const payload: unknown = await request.json().catch(() => undefined);
   const fields = { apiKey: "anthropicApiKey", updateToken: "githubUpdateToken" } as const;
   const openAtLogin = typeof payload === "object" && payload !== null && "openAtLogin" in payload && typeof payload.openAtLogin === "boolean" ? payload.openAtLogin : undefined;
-  if (typeof payload !== "object" || payload === null || (openAtLogin === undefined && !Object.keys(fields).some((name) => typeof (payload as Record<string, unknown>)[name] === "string"))) {
+  const figureLabel = typeof payload === "object" && payload !== null && "figureLabel" in payload && isFigureLabel(payload.figureLabel) ? payload.figureLabel : undefined;
+  if (typeof payload !== "object" || payload === null || (openAtLogin === undefined && figureLabel === undefined && !Object.keys(fields).some((name) => typeof (payload as Record<string, unknown>)[name] === "string"))) {
     return NextResponse.json({ error: "An API key, update token or start-up choice is required." }, { status: 400 });
   }
   const settings = await readAppSettings();
   if (openAtLogin !== undefined) settings.openAtLogin = openAtLogin;
+  if (figureLabel !== undefined) settings.figureLabel = figureLabel;
   for (const [name, key] of Object.entries(fields)) {
     const value = (payload as Record<string, unknown>)[name];
     if (typeof value !== "string") continue;
