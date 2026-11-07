@@ -1,10 +1,13 @@
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, createWriteStream } from "node:fs";
-import { access, appendFile, cp, mkdir, readdir } from "node:fs/promises";
+import { appendFileSync, createWriteStream, readFileSync, watchFile, writeFileSync } from "node:fs";
+import { access, appendFile, cp, mkdir, readdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import path from "node:path";
 
-import { app, BrowserWindow, dialog, session, shell } from "electron";
+import { app, BrowserWindow, dialog, nativeTheme, screen, session, shell } from "electron";
+
+import { startAutomaticUpdates } from "./updater.mjs";
 
 let mainWindow;
 let nextServer;
@@ -25,12 +28,20 @@ if (!hasSingleInstanceLock) {
   app.quit();
 }
 
-function getFreePort() {
+// The page's saved state (open project, PDF page, zoom) is kept per address, so the app asks for the
+// same port every time and only takes another one when something else is already using it.
+const preferredApplicationPort = 41837;
+
+async function getApplicationPort() {
+  return getFreePort(preferredApplicationPort).catch(() => getFreePort(0));
+}
+
+function getFreePort(port) {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.unref();
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(port, "127.0.0.1", () => {
       const address = server.address();
       const port = typeof address === "object" && address !== null ? address.port : undefined;
       server.close(() => {
@@ -107,17 +118,75 @@ async function seedPdfAssets(assetRoot) {
   }
 }
 
+async function prepareApplicationDatabase(databasePort, psql, seedDatabase, migrationsRoot) {
+  // The packaged web server already ships the PostgreSQL driver; reuse it instead of the psql/createdb tools.
+  const webModules = createRequire(path.join(process.resourcesPath, "web", "apps", "web", "package.json"));
+  const pg = webModules("pg");
+  const adminClient = new pg.Client({ host: "127.0.0.1", port: databasePort, user: "postgres", database: "postgres" });
+  await adminClient.connect();
+  try {
+    const existing = await adminClient.query("SELECT 1 FROM pg_database WHERE datname = 'research_workspace'");
+    if (existing.rowCount === 0) {
+      await adminClient.query("CREATE DATABASE research_workspace");
+    }
+  } finally {
+    await adminClient.end();
+  }
+
+  const client = new pg.Client({ host: "127.0.0.1", port: databasePort, user: "postgres", database: "research_workspace" });
+  await client.connect();
+  try {
+    const migrations = (await readdir(migrationsRoot)).sort();
+    await client.query('CREATE TABLE IF NOT EXISTS "_desktop_migrations" ("name" TEXT PRIMARY KEY, "appliedAt" TIMESTAMPTZ NOT NULL DEFAULT now())');
+    const applied = new Set((await client.query('SELECT "name" FROM "_desktop_migrations"')).rows.map((row) => row.name));
+
+    if (applied.size === 0) {
+      const schema = await client.query(
+        "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'AcademicProject'"
+      );
+      // A full pg_dump seed needs psql for its COPY blocks; it holds the first migration's schema.
+      const restoreSeed = schema.rowCount === 0 && (await pathExists(seedDatabase)) && (await pathExists(psql));
+      if (restoreSeed) {
+        runDatabaseCommand(
+          psql,
+          ["-h", "127.0.0.1", "-p", String(databasePort), "-U", "postgres", "-d", "research_workspace", "-v", "ON_ERROR_STOP=1", "-f", seedDatabase],
+          "The initial research data could not be restored"
+        );
+      }
+      // Databases from versions before migrations were tracked already have the first migration.
+      if ((schema.rowCount === 1 || restoreSeed) && migrations[0] !== undefined) {
+        await client.query('INSERT INTO "_desktop_migrations" ("name") VALUES ($1)', [migrations[0]]);
+        applied.add(migrations[0]);
+      }
+    }
+
+    for (const name of migrations.filter((candidate) => !applied.has(candidate))) {
+      await client.query("BEGIN");
+      try {
+        await client.query(await readFile(path.join(migrationsRoot, name, "migration.sql"), "utf8"));
+        await client.query('INSERT INTO "_desktop_migrations" ("name") VALUES ($1)', [name]);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw new Error(`The database update ${name} could not be applied: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      }
+    }
+  } finally {
+    await client.end();
+  }
+}
+
 async function ensureManagedDatabase(userDataRoot, logRoot) {
   desktopBootstrapLog = path.join(logRoot, "desktop-bootstrap.log");
   const databasePort = 55432;
   const postgresBin = path.join(process.resourcesPath, "postgresql", "bin");
   const initDb = path.join(postgresBin, "initdb.exe");
   const pgCtl = path.join(postgresBin, "pg_ctl.exe");
-  const createDb = path.join(postgresBin, "createdb.exe");
   const psql = path.join(postgresBin, "psql.exe");
   const clusterRoot = path.join(userDataRoot, "postgres-data");
   const databaseLog = path.join(logRoot, "postgres.log");
   const seedDatabase = path.join(process.resourcesPath, "seed", "database.sql");
+  const migrationsRoot = path.join(process.resourcesPath, "seed", "migrations");
   const isInitialized = await pathExists(path.join(clusterRoot, "PG_VERSION"));
 
   if (!isInitialized) {
@@ -141,39 +210,7 @@ async function ensureManagedDatabase(userDataRoot, logRoot) {
   }
   managedDatabaseStarted = true;
 
-  const connectionArguments = ["-h", "127.0.0.1", "-p", String(databasePort), "-U", "postgres"];
-  const databaseCheck = runDatabaseCommand(
-    psql,
-    [...connectionArguments, "-d", "postgres", "-Atc", "SELECT 1 FROM pg_database WHERE datname='research_workspace';"],
-    "The application database could not be checked",
-    true
-  );
-  const databaseExists = databaseCheck.status === 0 && (databaseCheck.stdout ?? "").trim() === "1";
-
-  if (!databaseExists) {
-    runDatabaseCommand(createDb, [...connectionArguments, "research_workspace"], "The application database could not be created");
-  }
-
-  const schemaCheck = runDatabaseCommand(
-    psql,
-    [
-      ...connectionArguments,
-      "-d",
-      "research_workspace",
-      "-Atc",
-      "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='AcademicProject';"
-    ],
-    "The application database schema could not be checked",
-    true
-  );
-
-  if (schemaCheck.status !== 0 || (schemaCheck.stdout ?? "").trim() !== "1") {
-    runDatabaseCommand(
-      psql,
-      [...connectionArguments, "-d", "research_workspace", "-v", "ON_ERROR_STOP=1", "-f", seedDatabase],
-      "The initial research data could not be restored"
-    );
-  }
+  await prepareApplicationDatabase(databasePort, psql, seedDatabase, migrationsRoot);
 
   managedDatabaseRoot = clusterRoot;
   managedDatabaseControl = pgCtl;
@@ -181,7 +218,7 @@ async function ensureManagedDatabase(userDataRoot, logRoot) {
 }
 
 async function startPackagedServer() {
-  const port = await getFreePort();
+  const port = await getApplicationPort();
   const serverRoot = path.join(process.resourcesPath, "web");
   const serverScript = path.join(serverRoot, "apps", "web", "server.js");
   const userDataRoot = app.getPath("userData");
@@ -203,7 +240,9 @@ async function startPackagedServer() {
       LOCAL_ASSET_ROOT: assetRoot,
       NODE_ENV: "production",
       PORT: String(port),
-      RESEARCH_DESKTOP: "1"
+      RESEARCH_DESKTOP: "1",
+      RESEARCH_SETTINGS_FILE: path.join(userDataRoot, "settings.json"),
+      RESEARCH_UPDATE_STATUS_FILE: path.join(userDataRoot, "update-status.json")
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
@@ -225,15 +264,56 @@ function isApplicationUrl(url) {
   }
 }
 
-function secureWindowOptions() {
+function windowStateFile() {
+  return path.join(app.getPath("userData"), "window-state.json");
+}
+
+// The window opens where and how big it was last time.
+function readWindowState() {
+  try {
+    const state = JSON.parse(readFileSync(windowStateFile(), "utf8"));
+    const saved = ["x", "y", "width", "height"].every((key) => Number.isInteger(state[key])) ? { x: state.x, y: state.y, width: Math.max(1000, state.width), height: Math.max(700, state.height) } : undefined;
+    // A window last seen on a screen that is no longer connected opens at the default place instead.
+    const visible = saved !== undefined && screen.getAllDisplays().some(({ workArea }) => saved.x < workArea.x + workArea.width - 100 && saved.x + saved.width > workArea.x + 100 && saved.y >= workArea.y - 10 && saved.y < workArea.y + workArea.height - 100);
+    return { bounds: visible ? saved : {}, maximized: state.maximized === true };
+  } catch {
+    return { bounds: {}, maximized: false };
+  }
+}
+
+function rememberWindowState(window) {
+  const save = () => {
+    try {
+      writeFileSync(windowStateFile(), JSON.stringify({ ...window.getNormalBounds(), maximized: window.isMaximized() }));
+    } catch {
+      // Only the window position is lost.
+    }
+  };
+  window.on("close", save);
+}
+
+// Starting with Windows is on unless switched off in Ayarlar (settings.json openAtLogin: false).
+function applyOpenAtLogin(settingsFile) {
+  if (!app.isPackaged || process.platform !== "win32") return;
+  let openAtLogin = true;
+  try {
+    openAtLogin = JSON.parse(readFileSync(settingsFile, "utf8")).openAtLogin !== false;
+  } catch {
+    // No settings yet: keep the default.
+  }
+  app.setLoginItemSettings({ openAtLogin });
+}
+
+function secureWindowOptions(bounds = {}) {
   return {
-    backgroundColor: "#f5f3ec",
+    backgroundColor: "#ffffff",
     height: 900,
     minHeight: 700,
     minWidth: 1000,
     show: true,
     title: "Research Workspace",
     width: 1440,
+    ...bounds,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -249,7 +329,10 @@ async function createMainWindow() {
     : process.env.RESEARCH_DESKTOP_URL ?? "http://127.0.0.1:3210";
   applicationOrigin = new URL(startUrl).origin;
 
-  mainWindow = new BrowserWindow(secureWindowOptions());
+  const windowState = readWindowState();
+  mainWindow = new BrowserWindow(secureWindowOptions(windowState.bounds));
+  if (windowState.maximized) mainWindow.maximize();
+  rememberWindowState(mainWindow);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isApplicationUrl(url)) {
@@ -281,10 +364,21 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(async () => {
+  // The interface is designed light only; a dark Windows theme would otherwise recolour form fields.
+  nativeTheme.themeSource = "light";
   app.setAppUserModelId("com.researchworkspace.desktop");
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  const settingsFile = path.join(app.getPath("userData"), "settings.json");
+  applyOpenAtLogin(settingsFile);
+  watchFile(settingsFile, { interval: 5000 }, () => applyOpenAtLogin(settingsFile));
   try {
     await createMainWindow();
+    startAutomaticUpdates(
+      () => mainWindow,
+      path.join(app.getPath("userData"), "settings.json"),
+      path.join(app.getPath("userData"), "update-status.json"),
+      stopServicesForUpdate
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const logRoot = path.join(app.getPath("userData"), "logs");
@@ -299,10 +393,7 @@ app.on("window-all-closed", () => {
   app.quit();
 });
 
-app.on("before-quit", () => {
-  if (nextServer !== undefined && nextServer.exitCode === null) {
-    nextServer.kill();
-  }
+function stopManagedDatabase() {
   if (managedDatabaseStarted && managedDatabaseControl !== undefined && managedDatabaseRoot !== undefined) {
     runDatabaseCommand(
       managedDatabaseControl,
@@ -312,4 +403,23 @@ app.on("before-quit", () => {
     );
     managedDatabaseStarted = false;
   }
+}
+
+// The update installer starts before the app quits and replaces files that the local server and
+// PostgreSQL keep open, so both have to be fully stopped before it runs.
+async function stopServicesForUpdate() {
+  mainWindow?.hide();
+  if (nextServer !== undefined && nextServer.exitCode === null) {
+    const exited = new Promise((resolve) => nextServer.once("exit", resolve));
+    nextServer.kill();
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  }
+  stopManagedDatabase();
+}
+
+app.on("before-quit", () => {
+  if (nextServer !== undefined && nextServer.exitCode === null) {
+    nextServer.kill();
+  }
+  stopManagedDatabase();
 });

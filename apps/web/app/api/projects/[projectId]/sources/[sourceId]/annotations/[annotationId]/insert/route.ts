@@ -5,12 +5,15 @@ import { createDatabaseClient, type Prisma } from "@research/db";
 import { NextResponse } from "next/server";
 
 import { getDevelopmentProjectContext } from "../../../../../../../../../lib/development-context";
+import { appendToSection } from "../../../../../../../../../lib/document-sections";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request, context: { params: Promise<{ projectId: string; sourceId: string; annotationId: string }> }): Promise<NextResponse> {
   const { projectId, sourceId, annotationId } = await context.params;
-  const paraphrase = readParaphrase(await request.json().catch(() => undefined));
+  const body: unknown = await request.json().catch(() => undefined);
+  const paraphrase = readParaphrase(body);
+  const sectionId = typeof body === "object" && body !== null && "sectionId" in body && typeof body.sectionId === "string" ? body.sectionId : undefined;
   if (paraphrase === null) return NextResponse.json({ error: "A paraphrase must contain between 1 and 20,000 characters." }, { status: 400 });
   try {
     const developmentContext = await getDevelopmentProjectContext();
@@ -23,7 +26,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         select: {
           reference: { select: { id: true, cslData: true } },
           versions: { orderBy: { versionNumber: "desc" }, take: 1, select: { pdfAsset: { select: { id: true, checksum: true } } } },
-          annotations: { where: { id: annotationId, deletedAt: null }, select: { id: true, anchors: { orderBy: { createdAt: "asc" }, take: 1, select: { id: true, pageIndex: true, selectedText: true } }, researchNotes: { where: { deletedAt: null }, take: 1, select: { id: true } } } }
+          annotations: { where: { id: annotationId, type: { not: "STICKY_NOTE" }, deletedAt: null }, select: { id: true, anchors: { orderBy: { createdAt: "asc" }, take: 1, select: { id: true, pageIndex: true, selectedText: true } }, researchNotes: { where: { deletedAt: null }, take: 1, select: { id: true } } } }
         }
       });
       const annotation = source?.annotations[0];
@@ -40,13 +43,14 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       const insertedText = paraphrase === undefined ? `“${selectedText}” ${citationWithPage}` : `${paraphrase} ${citationWithPage}`;
       const insertedTextHash = sha256(insertedText);
       const nodeId = randomUUID();
+      const provenanceId = randomUUID();
       const result = await database.prisma.$transaction(async (transaction) => {
         const project = await transaction.academicProject.findFirst({
           where: { id: projectId, workspaceId: developmentContext.workspaceId, deletedAt: null },
           select: { mainDocument: { select: { id: true, content: true } } }
         });
         if (project?.mainDocument === null || project === null) throw new Error("Main document not found.");
-        const content = appendParagraph(project.mainDocument.content, nodeId, insertedText);
+        const content = appendToSection(project.mainDocument.content, sectionId, nodeId, insertedText, provenanceId);
         const block = await transaction.documentBlock.create({
           data: { academicProjectId: projectId, mainDocumentId: project.mainDocument.id, nodeId, blockType: "paragraph", contentHash: insertedTextHash }
         });
@@ -59,6 +63,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         });
         const provenance = await transaction.provenanceLink.create({
           data: {
+            id: provenanceId,
             academicProjectId: projectId,
             mainDocumentId: project.mainDocument.id,
             targetDocumentBlockId: block.id,
@@ -102,13 +107,6 @@ function asCslReference(value: unknown): Record<string, unknown> {
 
 function addPageLocator(citation: string, pageNumber: number): string {
   return citation.endsWith(")") ? `${citation.slice(0, -1)}, p. ${pageNumber})` : `${citation}, p. ${pageNumber}`;
-}
-
-function appendParagraph(content: unknown, nodeId: string, text: string): Record<string, unknown> {
-  const current = typeof content === "object" && content !== null && "type" in content && content.type === "doc" && "content" in content && Array.isArray(content.content)
-    ? content.content
-    : [];
-  return { type: "doc", content: [...current, { type: "paragraph", attrs: { id: nodeId }, content: [{ type: "text", text }] }] };
 }
 
 function sha256(value: string): string {

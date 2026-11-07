@@ -1,0 +1,27 @@
+name: Desktop installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/research_workspace?schema=public
+      SHADOW_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/research_workspace_shadow?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm desktop:dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Research-Workspace-Setup
+          path: dist/desktop/Research-Workspace-Setup-*.exe
